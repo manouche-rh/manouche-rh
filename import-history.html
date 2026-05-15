@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Import historique — Man'ouché</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Geist', system-ui, sans-serif; background: #fafafa; color: #0a0a0a; padding: 32px 24px; max-width: 720px; margin: 0 auto; line-height: 1.5; font-size: 14px; }
+  h1 { font-family: 'Instrument Serif', serif; font-size: 36px; letter-spacing: -0.02em; line-height: 1; margin-bottom: 8px; }
+  h1 em { color: #737373; font-style: italic; }
+  .sub { color: #737373; margin-bottom: 28px; }
+  .card { background: #fff; border: 1px solid #e5e5e5; border-radius: 12px; padding: 22px; margin-bottom: 14px; }
+  .step { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 14px; }
+  .step-num { width: 28px; height: 28px; background: #0a0a0a; color: #fff; border-radius: 50%; display: grid; place-items: center; font-weight: 500; font-size: 12.5px; flex-shrink: 0; font-family: 'Geist Mono', monospace; }
+  .step-body { flex: 1; }
+  .step-title { font-weight: 500; font-size: 15px; margin-bottom: 2px; }
+  .step-desc { color: #525252; font-size: 13px; }
+  .file-input { margin-top: 10px; padding: 10px; border: 1.5px dashed #e5e5e5; border-radius: 8px; background: #fafafa; font-size: 13px; width: 100%; cursor: pointer; }
+  button { padding: 11px 20px; background: #0a0a0a; color: #fff; border: none; border-radius: 8px; font: 500 14px 'Geist', sans-serif; cursor: pointer; transition: transform .12s; }
+  button:hover { transform: translateY(-1px); }
+  button:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+  .status { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; background: #f5f5f5; border-radius: 20px; font-size: 12.5px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #737373; }
+  .dot.on { background: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,.15); }
+  .log { background: #0a0a0a; color: #fff; padding: 14px 16px; border-radius: 8px; font-family: 'Geist Mono', monospace; font-size: 11.5px; max-height: 300px; overflow: auto; line-height: 1.7; margin-top: 12px; white-space: pre-wrap; }
+  .summary { background: #f5f5f5; padding: 14px; border-radius: 8px; margin-top: 10px; font-size: 13px; }
+  .summary div { display: flex; justify-content: space-between; padding: 4px 0; }
+  .summary strong { font-family: 'Geist Mono', monospace; font-weight: 500; }
+  .danger { background: #fef2f2; color: #b91c1c; padding: 12px 14px; border-radius: 8px; font-size: 13px; border: 1px solid rgba(185,28,28,.15); margin-bottom: 12px; }
+</style>
+</head>
+<body>
+
+<h1>Import <em>historique</em></h1>
+<div class="sub">Charge ton fichier <code style="font-family:'Geist Mono',monospace">manouche_firebase_import.json</code> dans Firebase. Ce script écrase les shifts existants pour les 15 semaines de février à mai 2026, et met à jour les fiches salariés.</div>
+
+<div class="card">
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <div class="step-title">Connexion Firebase</div>
+      <div class="step-desc">Connexion automatique à <code style="font-family:'Geist Mono',monospace">manouche75003</code></div>
+      <div style="margin-top:10px;"><span class="status" id="status"><span class="dot"></span><span id="statusText">Connexion…</span></span></div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <div class="step-title">Choisis le fichier d'import</div>
+      <div class="step-desc">Le fichier JSON que tu as téléchargé avec les 15 semaines de planning et les 9 salariés.</div>
+      <input type="file" id="fileInput" accept=".json" class="file-input">
+      <div id="summary" class="summary" style="display:none;"></div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <div class="step-title">Lance l'import</div>
+      <div class="danger">⚠️ Cet import écrase les shifts et salariés actuellement dans Firebase. Tes pointages et congés ne sont pas touchés. Action irréversible.</div>
+      <button id="importBtn" disabled>Lancer l'import</button>
+      <div id="log" class="log" style="display:none;"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+<script>
+const FB_CONFIG = {
+  apiKey: "AIzaSyDPQz5sLRsSp9kaqG8JLyOW_FeqszkcCUg",
+  authDomain: "manouche75003.firebaseapp.com",
+  databaseURL: "https://manouche75003-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "manouche75003",
+  storageBucket: "manouche75003.firebasestorage.app",
+  messagingSenderId: "620239670518",
+  appId: "1:620239670518:web:ec6249a4b8522506b5f0d7"
+};
+
+const $ = (s) => document.querySelector(s);
+const status = $('#status');
+const statusText = $('#statusText');
+const log = $('#log');
+const summary = $('#summary');
+const importBtn = $('#importBtn');
+
+let db = null;
+let payload = null;
+
+function setStatus(text, ok) {
+  statusText.textContent = text;
+  status.querySelector('.dot').className = 'dot' + (ok ? ' on' : '');
+}
+function logLine(s) {
+  log.style.display = 'block';
+  log.textContent += s + '\n';
+  log.scrollTop = log.scrollHeight;
+}
+
+(async () => {
+  try {
+    if (!firebase.apps.length) firebase.initializeApp(FB_CONFIG);
+    await firebase.auth().signInAnonymously();
+    db = firebase.database();
+    setStatus('Connecté à manouche75003', true);
+  } catch (e) {
+    setStatus('Échec connexion : ' + e.message, false);
+  }
+})();
+
+$('#fileInput').addEventListener('change', async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try {
+    const text = await f.text();
+    payload = JSON.parse(text);
+    const empCount = (payload.employees || []).length;
+    const shiftCount = Object.keys(payload.shifts || {}).length;
+    const weeks = new Set(Object.keys(payload.shifts || {}).map(k => k.split('_').slice(2).join('_')));
+    summary.style.display = 'block';
+    summary.innerHTML = `
+      <div><span>Salariés à mettre à jour</span><strong>${empCount}</strong></div>
+      <div><span>Shifts à importer</span><strong>${shiftCount}</strong></div>
+      <div><span>Semaines couvertes</span><strong>${weeks.size}</strong></div>
+    `;
+    importBtn.disabled = false;
+  } catch (err) {
+    summary.style.display = 'block';
+    summary.innerHTML = '<div style="color:#b91c1c;">Fichier invalide : ' + err.message + '</div>';
+    importBtn.disabled = true;
+  }
+});
+
+importBtn.addEventListener('click', async () => {
+  if (!db || !payload) return;
+  importBtn.disabled = true;
+  log.textContent = '';
+  try {
+    logLine('🚀 Démarrage import...');
+    logLine(`📋 Salariés (${payload.employees.length})`);
+    await db.ref('employees').set(payload.employees);
+    logLine('  ✓ Salariés mis à jour');
+
+    logLine(`📅 Shifts (${Object.keys(payload.shifts).length})`);
+    // Update in batches to avoid huge payload
+    const entries = Object.entries(payload.shifts);
+    const BATCH = 50;
+    for (let i = 0; i < entries.length; i += BATCH) {
+      const batch = Object.fromEntries(entries.slice(i, i + BATCH));
+      await db.ref('shifts').update(batch);
+      logLine(`  ${Math.min(i+BATCH, entries.length)}/${entries.length}…`);
+    }
+    logLine('✅ Import terminé avec succès !');
+    logLine('');
+    logLine('Tu peux maintenant retourner sur l\'app Man\'ouché RH et naviguer dans l\'historique.');
+  } catch (e) {
+    logLine('❌ Erreur : ' + e.message);
+    console.error(e);
+  } finally {
+    importBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
