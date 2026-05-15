@@ -396,7 +396,6 @@ function openModal({ title, body, footer, onClose }) {
 
 // ─────────── FIREBASE ───────────
 let db = null;
-let storage = null;
 async function initFirebase() {
   if (typeof firebase === 'undefined') {
     console.warn('Firebase not available — local mode');
@@ -406,7 +405,6 @@ async function initFirebase() {
     if (!firebase.apps.length) firebase.initializeApp(FB_CONFIG);
     await firebase.auth().signInAnonymously();
     db = firebase.database();
-    if (firebase.storage) storage = firebase.storage();
     state.fbReady = true;
     return true;
   } catch (e) {
@@ -416,19 +414,79 @@ async function initFirebase() {
   }
 }
 
-// ─────────── FIREBASE STORAGE — DOCUMENTS ───────────
+// ─────────── DOCUMENTS — stockage base64 dans RTDB (sans Firebase Storage) ───────────
+const MAX_DOC_SIZE = 2 * 1024 * 1024; // 2 Mo limite côté upload (un peu plus en base64)
+const MAX_RTDB_SIZE = 8 * 1024 * 1024; // 8 Mo dur (limite RTDB par node = 10 Mo)
+
+async function compressImageIfNeeded(file, maxDim = 1800, quality = 0.85) {
+  if (!file.type || !file.type.startsWith('image/')) return file;
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width <= maxDim && height <= maxDim && file.size < 600*1024) {
+        URL.revokeObjectURL(img.src); resolve(file); return;
+      }
+      const canvas = document.createElement('canvas');
+      if (width > height) {
+        if (width > maxDim) { height = (maxDim / width) * height; width = maxDim; }
+      } else {
+        if (height > maxDim) { width = (maxDim / height) * width; height = maxDim; }
+      }
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      canvas.toBlob(blob => {
+        URL.revokeObjectURL(img.src);
+        if (!blob) { resolve(file); return; }
+        const out = new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+        resolve(out);
+      }, 'image/jpeg', quality);
+    };
+    img.onerror = () => { URL.revokeObjectURL(img.src); resolve(file); };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+async function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
 async function uploadEmployeeDoc(empId, file, category) {
-  if (!storage) { toast('Firebase Storage non disponible', 'error'); return null; }
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const path = `employees/${empId}/${category}/${Date.now()}_${safeName}`;
+  if (!db) { toast('Firebase non disponible', 'error'); return null; }
+
+  // Auto-compress images
+  let workFile = file;
+  if (file.type && file.type.startsWith('image/')) {
+    try { workFile = await compressImageIfNeeded(file); } catch(e) { /* ignore */ }
+  }
+
+  if (workFile.size > MAX_DOC_SIZE) {
+    toast(`Fichier trop gros (${formatBytes(workFile.size)}). Limite 2 Mo — compresse le PDF ou réduis le scan.`, 'error', 6000);
+    return null;
+  }
+
   try {
-    const snap = await storage.ref(path).put(file);
-    const url = await snap.ref.getDownloadURL();
+    const dataUrl = await fileToDataUrl(workFile);
+    if (dataUrl.length > MAX_RTDB_SIZE) {
+      toast(`Fichier trop volumineux après encodage. Réduis encore.`, 'error', 6000);
+      return null;
+    }
+    const docId = 'd' + Date.now() + Math.random().toString(36).slice(2,7);
+    // Save the blob in a SEPARATE node (not loaded on startup)
+    await db.ref(`docBlobs/${docId}`).set(dataUrl);
     return {
-      id: 'd' + Date.now(),
-      name: file.name, size: file.size, type: file.type,
-      category, path, url,
+      id: docId,
+      name: workFile.name,
+      size: workFile.size,
+      type: workFile.type,
+      category,
       uploadedAt: new Date().toISOString(),
+      // Note: no url field, fetched on demand from docBlobs/{id}
     };
   } catch (e) {
     console.error('Upload failed', e);
@@ -437,10 +495,59 @@ async function uploadEmployeeDoc(empId, file, category) {
   }
 }
 
-async function deleteEmployeeDoc(path) {
-  if (!storage) return false;
-  try { await storage.ref(path).delete(); return true; }
-  catch (e) { console.warn('Delete from storage:', e.message); return true; }
+async function fetchDocBlob(docId) {
+  if (!db) return null;
+  try {
+    const snap = await db.ref(`docBlobs/${docId}`).once('value');
+    return snap.val();
+  } catch (e) {
+    console.error('Fetch blob failed', e);
+    return null;
+  }
+}
+
+async function openDocInNewTab(docId, fileName) {
+  toast('Ouverture du document...', '');
+  const dataUrl = await fetchDocBlob(docId);
+  if (!dataUrl) { toast('Document introuvable', 'error'); return; }
+  const win = window.open('', '_blank');
+  if (!win) { toast('Pop-up bloquée — autorise les pop-ups pour ouvrir le document', 'error', 6000); return; }
+  // Detect if image, PDF, or other
+  const isImage = dataUrl.startsWith('data:image/');
+  const isPdf = dataUrl.startsWith('data:application/pdf');
+  win.document.title = fileName;
+  if (isImage) {
+    win.document.body.style.margin = '0';
+    win.document.body.style.background = '#000';
+    win.document.body.innerHTML = `<img src="${dataUrl}" style="display:block;max-width:100%;max-height:100vh;margin:0 auto;">`;
+  } else if (isPdf) {
+    win.document.body.style.margin = '0';
+    win.document.body.innerHTML = `<iframe src="${dataUrl}" style="width:100vw;height:100vh;border:0;"></iframe>`;
+  } else {
+    // Trigger download for other types
+    const a = win.document.createElement('a');
+    a.href = dataUrl;
+    a.download = fileName;
+    win.document.body.appendChild(a);
+    a.click();
+    setTimeout(() => win.close(), 500);
+  }
+}
+
+async function downloadDocFile(docId, fileName) {
+  toast('Téléchargement...', '');
+  const dataUrl = await fetchDocBlob(docId);
+  if (!dataUrl) { toast('Document introuvable', 'error'); return; }
+  const a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = fileName;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+async function deleteDocBlob(docId) {
+  if (!db) return;
+  try { await db.ref(`docBlobs/${docId}`).remove(); }
+  catch (e) { console.warn(e); }
 }
 
 function formatBytes(b) {
@@ -762,102 +869,96 @@ function bindLogin() {
 function viewAdminShell() {
   const anomalies = detectAnomalies();
   const pendingReqs = Object.values(state.absenceRequests || {}).filter(r => r && r.status === 'pending').length;
+
+  // Top-level sections — like Combo
+  const TOP_SECTIONS = [
+    { key: 'dashboard', label: 'Aperçu',   pages: ['dashboard'] },
+    { key: 'planning',  label: 'Planning', pages: ['planning', 'month'] },
+    { key: 'team',      label: 'Équipe',   pages: ['employees'] },
+    { key: 'hours',     label: 'Heures',   pages: ['hours', 'pointages'] },
+    { key: 'rh',        label: 'RH',       pages: ['requests', 'cp', 'rh', 'alerts'] },
+  ];
+
+  const currentSection = TOP_SECTIONS.find(s => s.pages.includes(state.page)) || TOP_SECTIONS[0];
+  const showSubNav = currentSection.key === 'rh';
+
   return `
     <div class="shell">
-      <aside class="side">
-        <div class="side-brand">
-          <div class="side-mark">M</div>
-          <div>
-            <div class="side-brand-name">Man'ouché</div>
-            <div class="side-brand-sub">Console RH</div>
+      <header class="topnav">
+        <div class="topnav-inner">
+          <div class="topnav-brand">
+            <span class="brand-mark">M</span>
+            <span class="brand-name">Man'ouché</span>
+          </div>
+          <nav class="topnav-links">
+            ${TOP_SECTIONS.map(s => {
+              const active = s.key === currentSection.key;
+              const firstPage = s.pages[0];
+              return `<button class="topnav-link ${active?'active':''}" data-page="${firstPage}">${esc(s.label)}${s.key==='rh' && pendingReqs > 0 ? `<span class="dot-badge">${pendingReqs}</span>` : ''}</button>`;
+            }).join('')}
+          </nav>
+          <div class="topnav-right">
+            <button class="topnav-icon" title="${state.fbReady?'Connecté':'Hors ligne'}">
+              <span class="status-dot-tiny" style="background:${state.fbReady?'#22c55e':'#737373'};"></span>
+            </button>
+            ${anomalies.length ? `<button class="topnav-icon" data-page="alerts" title="${anomalies.length} alertes">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.72 3h16.92a2 2 0 0 0 1.72-3L13.7 3.86a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+              <span class="dot-badge">${anomalies.length}</span>
+            </button>` : ''}
+            <button class="topnav-icon" data-logout title="Déconnexion">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+            </button>
+            <div class="topnav-avatar">A</div>
           </div>
         </div>
-
-        <div class="side-section">Vue d'ensemble</div>
-        <button class="nav-item ${state.page==='dashboard'?'active':''}" data-page="dashboard">
-          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 12h6V3H3v9zM3 21h6v-6H3v6zM12 21h9V12h-9v9zM12 3v6h9V3h-9z"/></svg>
-          Tableau de bord
-        </button>
-        <button class="nav-item ${state.page==='planning'?'active':''}" data-page="planning">
-          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-          Planning
-        </button>
-        <button class="nav-item ${state.page==='month'?'active':''}" data-page="month">
-          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01"/></svg>
-          Vue mois
-        </button>
-        <button class="nav-item ${state.page==='hours'?'active':''}" data-page="hours">
-          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="9"/></svg>
-          Heures
-        </button>
-        <button class="nav-item ${state.page==='pointages'?'active':''}" data-page="pointages">
-          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-          Pointages
-        </button>
-        <button class="nav-item ${state.page==='alerts'?'active':''}" data-page="alerts">
-          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.72 3h16.92a2 2 0 0 0 1.72-3L13.7 3.86a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
-          Alertes
-          ${anomalies.length ? `<span class="badge">${anomalies.length}</span>` : ''}
-        </button>
-
-        <div class="side-section">Équipe & RH</div>
-        <button class="nav-item ${state.page==='employees'?'active':''}" data-page="employees">
-          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          Salariés
-        </button>
-        <button class="nav-item ${state.page==='requests'?'active':''}" data-page="requests">
-          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
-          Demandes d'absence
-          ${pendingReqs > 0 ? `<span class="badge">${pendingReqs}</span>` : ''}
-        </button>
-        <button class="nav-item ${state.page==='cp'?'active':''}" data-page="cp">
-          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>
-          Compteurs CP
-        </button>
-        <button class="nav-item ${state.page==='rh'?'active':''}" data-page="rh">
-          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>
-          Suivi RH
-        </button>
-
-        <div class="side-foot">
-          <div class="av">A</div>
-          <div style="flex:1;">
-            <div style="color:#fff;font-weight:500;font-size:12.5px;">Admin</div>
-            <div style="font-size:11px;display:flex;align-items:center;gap:6px;">
-              <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${state.fbReady ? '#22c55e' : '#737373'};box-shadow:${state.fbReady ? '0 0 0 3px rgba(34,197,94,.18)' : 'none'};"></span>
-              ${state.fbReady ? 'Connecté' : 'Hors ligne'}
-            </div>
-          </div>
-          <button class="btn-icon" data-logout style="color:rgba(255,255,255,.6);" title="Déconnexion">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
-          </button>
-        </div>
-      </aside>
-
-      <div class="main">
-        <div class="mob-head">
-          <div class="side-mark">M</div>
-          <div class="brand">Man'ouché</div>
+        <div class="topnav-mobile">
           <select id="mobNav">
-            <option value="dashboard" ${state.page==='dashboard'?'selected':''}>Tableau de bord</option>
-            <option value="planning" ${state.page==='planning'?'selected':''}>Planning</option>
-            <option value="month" ${state.page==='month'?'selected':''}>Vue mois</option>
-            <option value="hours" ${state.page==='hours'?'selected':''}>Heures</option>
-            <option value="pointages" ${state.page==='pointages'?'selected':''}>Pointages</option>
-            <option value="alerts" ${state.page==='alerts'?'selected':''}>Alertes${anomalies.length?` (${anomalies.length})`:''}</option>
-            <option value="employees" ${state.page==='employees'?'selected':''}>Salariés</option>
-            <option value="requests" ${state.page==='requests'?'selected':''}>Demandes${pendingReqs?` (${pendingReqs})`:''}</option>
-            <option value="cp" ${state.page==='cp'?'selected':''}>Compteurs CP</option>
-            <option value="rh" ${state.page==='rh'?'selected':''}>Suivi RH</option>
+            <optgroup label="Tableau de bord">
+              <option value="dashboard" ${state.page==='dashboard'?'selected':''}>Aperçu</option>
+            </optgroup>
+            <optgroup label="Planning">
+              <option value="planning" ${state.page==='planning'?'selected':''}>Planning hebdo</option>
+              <option value="month" ${state.page==='month'?'selected':''}>Vue mois</option>
+            </optgroup>
+            <optgroup label="Équipe">
+              <option value="employees" ${state.page==='employees'?'selected':''}>Salariés</option>
+            </optgroup>
+            <optgroup label="Heures">
+              <option value="hours" ${state.page==='hours'?'selected':''}>Préparation paie</option>
+              <option value="pointages" ${state.page==='pointages'?'selected':''}>Pointages</option>
+            </optgroup>
+            <optgroup label="RH">
+              <option value="requests" ${state.page==='requests'?'selected':''}>Demandes d'absence${pendingReqs?` (${pendingReqs})`:''}</option>
+              <option value="cp" ${state.page==='cp'?'selected':''}>Compteurs CP</option>
+              <option value="rh" ${state.page==='rh'?'selected':''}>Suivi RH</option>
+              <option value="alerts" ${state.page==='alerts'?'selected':''}>Alertes${anomalies.length?` (${anomalies.length})`:''}</option>
+            </optgroup>
           </select>
-          <button class="btn-icon" data-logout style="color:rgba(255,255,255,.7);">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
-          </button>
         </div>
+      </header>
 
-        <div class="page-pad fade-in" id="adminBody">
-          ${renderAdminPage()}
-        </div>
+      <div class="shell-body">
+        ${showSubNav ? `
+          <aside class="subnav">
+            <div class="subnav-section">RH</div>
+            <button class="subnav-item ${state.page==='requests'?'active':''}" data-page="requests">
+              Demandes d'absence
+              ${pendingReqs > 0 ? `<span class="subnav-badge">${pendingReqs}</span>` : ''}
+            </button>
+            <button class="subnav-item ${state.page==='cp'?'active':''}" data-page="cp">Compteurs CP</button>
+            <button class="subnav-item ${state.page==='rh'?'active':''}" data-page="rh">Suivi RH</button>
+            <button class="subnav-item ${state.page==='alerts'?'active':''}" data-page="alerts">
+              Alertes
+              ${anomalies.length ? `<span class="subnav-badge alert">${anomalies.length}</span>` : ''}
+            </button>
+          </aside>
+        ` : ''}
+
+        <main class="main ${showSubNav?'has-subnav':''}">
+          <div class="page-pad fade-in" id="adminBody">
+            ${renderAdminPage()}
+          </div>
+        </main>
       </div>
     </div>`;
 }
@@ -2642,8 +2743,8 @@ function empTabDocs(n) {
                       <div class="doc-meta">${formatBytes(d.size||0)} · ${new Date(d.uploadedAt).toLocaleDateString('fr-FR')}</div>
                     </div>
                     <div class="doc-actions">
-                      <a class="btn-ghost" href="${esc(d.url)}" target="_blank" rel="noopener" title="Ouvrir">↗</a>
-                      <a class="btn-ghost" href="${esc(d.url)}" download="${esc(d.name)}" title="Télécharger">↓</a>
+                      <button class="btn-ghost" data-open-doc="${esc(d.id)}" data-fname="${esc(d.name)}" title="Ouvrir">↗</button>
+                      <button class="btn-ghost" data-dl-doc="${esc(d.id)}" data-fname="${esc(d.name)}" title="Télécharger">↓</button>
                       <button class="btn-ghost" data-del-doc="${esc(d.id)}" title="Supprimer">✕</button>
                     </div>
                   </div>
@@ -2682,10 +2783,43 @@ function bindEmpTabDocs() {
   $('#uploadDoc').addEventListener('click', () => openDocUploader());
   const dlAll = $('#downloadAllDocs');
   if (dlAll) dlAll.addEventListener('click', () => downloadAllEmpDocs());
+  $$('[data-open-doc]').forEach(b => b.addEventListener('click', ev => {
+    openDocInNewTab(ev.currentTarget.dataset.openDoc, ev.currentTarget.dataset.fname);
+  }));
+  $$('[data-dl-doc]').forEach(b => b.addEventListener('click', ev => {
+    downloadDocFile(ev.currentTarget.dataset.dlDoc, ev.currentTarget.dataset.fname);
+  }));
   $$('[data-del-doc]').forEach(b => b.addEventListener('click', ev => {
     const docId = ev.currentTarget.dataset.delDoc;
     deleteEmpDoc(docId);
   }));
+}
+
+async function deleteEmpDoc(docId) {
+  const e = state.employees.find(x => x.id === state.empDetail);
+  const doc = (e.documents||[]).find(d => d.id === docId);
+  if (!doc) return;
+  if (!confirm(`Supprimer "${doc.name}" ? Cette action est irréversible.`)) return;
+  await deleteDocBlob(docId);
+  const updated = { ...e, documents: (e.documents||[]).filter(d => d.id !== docId) };
+  state.employees = state.employees.map(x => x.id === e.id ? updated : x);
+  fbSave('employees', state.employees);
+  toast('Document supprimé', '');
+  render();
+}
+
+async function downloadAllEmpDocs() {
+  const e = state.employees.find(x => x.id === state.empDetail);
+  const docs = e.documents || [];
+  if (!docs.length) return;
+  toast(`Téléchargement de ${docs.length} document${docs.length>1?'s':''}...`, '');
+  for (const d of docs) {
+    try {
+      await downloadDocFile(d.id, d.name);
+      await new Promise(r => setTimeout(r, 350));
+    } catch (err) { console.warn(err); }
+  }
+  toast('Téléchargements terminés', 'good');
 }
 
 function openDocUploader() {
@@ -2705,7 +2839,8 @@ function openDocUploader() {
           <div class="file-drop-content">
             <div style="font-size:32px;">📤</div>
             <div style="font-weight:500;margin-top:8px;">Cliquer pour choisir ou déposer</div>
-            <div class="text-mute" style="font-size:12px;margin-top:4px;">PDF, images, Word, Excel — jusqu'à 25 Mo</div>
+            <div class="text-mute" style="font-size:12px;margin-top:4px;">PDF, images, Word, Excel — <strong>max 2 Mo par fichier</strong></div>
+            <div class="text-mute" style="font-size:11px;margin-top:2px;">Les images sont automatiquement compressées</div>
           </div>
         </label>
         <div id="fileList" style="margin-top:10px;"></div>
@@ -2778,35 +2913,6 @@ function openDocUploader() {
     setTimeout(close, 600);
     render();
   });
-}
-
-async function deleteEmpDoc(docId) {
-  const e = state.employees.find(x => x.id === state.empDetail);
-  const doc = (e.documents||[]).find(d => d.id === docId);
-  if (!doc) return;
-  if (!confirm(`Supprimer "${doc.name}" ? Cette action est irréversible.`)) return;
-  await deleteEmployeeDoc(doc.path);
-  const updated = { ...e, documents: (e.documents||[]).filter(d => d.id !== docId) };
-  state.employees = state.employees.map(x => x.id === e.id ? updated : x);
-  fbSave('employees', state.employees);
-  toast('Document supprimé', '');
-  render();
-}
-
-async function downloadAllEmpDocs() {
-  const e = state.employees.find(x => x.id === state.empDetail);
-  const docs = e.documents || [];
-  if (!docs.length) return;
-  toast(`Téléchargement de ${docs.length} document${docs.length>1?'s':''}...`, '');
-  for (const d of docs) {
-    try {
-      const a = document.createElement('a');
-      a.href = d.url; a.download = d.name; a.target = '_blank';
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      await new Promise(r => setTimeout(r, 250)); // stagger to avoid browser blocking
-    } catch (err) { console.warn(err); }
-  }
-  toast('Téléchargements lancés', 'good');
 }
 
 // ── ROLE TAB ──
