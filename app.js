@@ -152,12 +152,45 @@ function fbListen() {
           if (!e.username) e.username = (e.prenom || '').toLowerCase();
           if (!e.code) e.code = '1234';
         });
+        console.log('[fb] employees loaded:', state.employees.length);
       }
-      if (k === 'shifts' && v) state.shifts = v;
+      if (k === 'shifts' && v) {
+        state.shifts = v;
+        migrateLegacyShifts();
+        console.log('[fb] shifts loaded:', Object.keys(state.shifts).length);
+      }
       if (k === 'punches' && v) state.punches = v;
       render();
+    }, err => {
+      console.error('[fb] read error on', k, err);
+      toast(`Lecture Firebase refusée (${k}) — vérifie les règles`, 'error', 6000);
     });
   });
+}
+
+// Migrate legacy RH_ULTIME shift keys (empId_dayIdx) to new format (empId_dayIdx_weekKey)
+// for the current week, so existing planning shows up immediately.
+function migrateLegacyShifts() {
+  if (!state.shifts) return;
+  const currentWk = weekKey(state.weekStart);
+  const updates = {};
+  let count = 0;
+  Object.keys(state.shifts).forEach(key => {
+    const parts = key.split('_');
+    if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+      const newKey = `${key}_${currentWk}`;
+      if (!state.shifts[newKey]) {
+        state.shifts[newKey] = state.shifts[key];
+        updates[newKey] = state.shifts[key];
+        count++;
+      }
+    }
+  });
+  if (count && db) {
+    console.log(`[migration] copying ${count} legacy shifts to current week`);
+    db.ref('shifts').update(updates).catch(e => console.warn('migration write failed', e));
+    toast(`${count} shifts récupérés de l'ancien planning`, 'good', 4000);
+  }
 }
 
 function fbSave(path, value) {
@@ -439,7 +472,10 @@ function viewAdminShell() {
           <div class="av">A</div>
           <div style="flex:1;">
             <div style="color:#fff;font-weight:500;font-size:12.5px;">Admin</div>
-            <div style="font-size:11px;">${state.fbReady ? '● Connecté' : '○ Hors ligne'}</div>
+            <div style="font-size:11px;display:flex;align-items:center;gap:6px;">
+              <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${state.fbReady ? '#22c55e' : '#737373'};box-shadow:${state.fbReady ? '0 0 0 3px rgba(34,197,94,.18)' : 'none'};"></span>
+              ${state.fbReady ? 'Connecté' : 'Hors ligne'}
+            </div>
           </div>
           <button class="btn-icon" data-logout style="color:rgba(255,255,255,.6);" title="Déconnexion">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
