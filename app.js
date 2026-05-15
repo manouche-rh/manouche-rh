@@ -97,6 +97,35 @@ function holidayFor(date) {
   return _holidayCache[y][dateISO(date)] || null;
 }
 
+// ─────────── VACANCES SCOLAIRES (Zone C — Paris) ───────────
+// Source : éducation nationale, dates officielles
+const SCHOOL_HOLIDAYS_ZONE_C = [
+  { name: 'Toussaint',  start: '2025-10-18', end: '2025-11-02' },
+  { name: 'Noël',       start: '2025-12-20', end: '2026-01-04' },
+  { name: 'Hiver',      start: '2026-02-14', end: '2026-03-01' },
+  { name: 'Printemps',  start: '2026-04-11', end: '2026-04-26' },
+  { name: 'Été',        start: '2026-07-04', end: '2026-08-31' },
+  { name: 'Toussaint',  start: '2026-10-17', end: '2026-11-02' },
+  { name: 'Noël',       start: '2026-12-19', end: '2027-01-03' },
+  { name: 'Hiver',      start: '2027-02-06', end: '2027-02-21' },
+  { name: 'Printemps',  start: '2027-04-03', end: '2027-04-18' },
+  { name: 'Été',        start: '2027-07-03', end: '2027-08-31' },
+];
+function schoolHolidayFor(date) {
+  const iso = dateISO(date);
+  for (const h of SCHOOL_HOLIDAYS_ZONE_C) {
+    if (iso >= h.start && iso <= h.end) return h;
+  }
+  return null;
+}
+function schoolHolidaysOverlappingWeek(weekStart) {
+  const startISO = dateISO(weekStart);
+  const endISO = dateISO(addDays(weekStart, 6));
+  return SCHOOL_HOLIDAYS_ZONE_C.filter(h =>
+    !(h.end < startISO || h.start > endISO)
+  );
+}
+
 // ─────────── BROUILLONS / PUBLICATIONS ───────────
 function weekIsPublished(wk) {
   if (state.publications[wk]) return true;
@@ -378,18 +407,28 @@ function openModal({ title, body, footer, onClose }) {
     <div class="modal">
       <div class="modal-h">
         <h3>${esc(title)}</h3>
-        <button class="btn-icon" data-close>✕</button>
+        <button class="btn-ghost" data-close aria-label="Fermer">✕</button>
       </div>
       <div class="modal-b">${body}</div>
       ${footer ? `<div class="modal-f">${footer}</div>` : ''}
     </div>`;
   document.body.appendChild(bg);
-  const close = () => { bg.remove(); onClose && onClose(); document.body.style.overflow = ''; };
   document.body.style.overflow = 'hidden';
+
+  const close = () => {
+    if (bg.classList.contains('closing')) return;
+    bg.classList.add('closing');
+    document.removeEventListener('keydown', escHandler);
+    setTimeout(() => {
+      bg.remove();
+      document.body.style.overflow = '';
+      onClose && onClose();
+    }, 250);
+  };
+
   bg.addEventListener('click', (e) => { if (e.target === bg) close(); });
   $$('[data-close]', bg).forEach(b => b.addEventListener('click', close));
-  // Escape key to close
-  const escHandler = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler); } };
+  const escHandler = (e) => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', escHandler);
   return { bg, close };
 }
@@ -817,11 +856,11 @@ function viewLogin() {
       <div class="login-card">
         <div class="login-mark">M</div>
         <h1 class="login-h">Man'ouché</h1>
-        <div class="login-sub">Espace RH</div>
+        <div class="login-sub">${loginMode === 'admin' ? 'Console de gestion' : 'Mon espace'}</div>
 
         <div class="tab-switch" data-active="${loginMode === 'admin' ? '1' : '0'}">
           <button data-mode="emp" class="${loginMode==='emp'?'active':''}">Salarié</button>
-          <button data-mode="admin" class="${loginMode==='admin'?'active':''}">Admin</button>
+          <button data-mode="admin" class="${loginMode==='admin'?'active':''}">Manager</button>
         </div>
 
         <form id="loginForm">
@@ -838,7 +877,7 @@ function viewLogin() {
 
         <div class="login-status">
           <span class="dot ${state.fbReady ? 'on' : 'off'}"></span>
-          <span>${state.fbReady ? 'Synchronisation en temps réel' : 'Mode local'}</span>
+          <span>${state.fbReady ? 'Synchronisation active' : 'Mode local'}</span>
         </div>
       </div>
     </div>`;
@@ -1163,22 +1202,28 @@ function pagePlanning() {
   return `
     <div class="page-head">
       <div>
-        <div class="uppercase-eyebrow">Planning hebdomadaire</div>
+        <div class="uppercase-eyebrow">Planning</div>
         <h1 class="h-1">${fmtRange(state.weekStart, wkEnd)}</h1>
-        <div class="row" style="gap:8px;margin-top:6px;">
+        <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap;">
           <span class="chip">${Math.round(totalH)} h planifiées</span>
           ${isPublished
             ? `<span class="chip good">✓ Publié ${new Date(pub.publishedAt).toLocaleDateString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>`
             : (weekShiftCount > 0
-              ? `<span class="chip draft">● BROUILLON — invisible des salariés</span>`
+              ? `<span class="chip draft">● Brouillon — invisible des salariés</span>`
               : `<span class="chip">Semaine vide</span>`)}
+          ${schoolHolidaysOverlappingWeek(state.weekStart).map(h =>
+            `<span class="chip accent" title="Zone C · ${new Date(h.start).toLocaleDateString('fr-FR')} → ${new Date(h.end).toLocaleDateString('fr-FR')}">🎒 Vacances ${esc(h.name)}</span>`
+          ).join('')}
+          ${weekFeries.map(f =>
+            `<span class="chip warn">📅 ${esc(f.short)} (${DAYS_SHORT[f.dayIdx]})</span>`
+          ).join('')}
         </div>
       </div>
       <div class="page-actions">
         <div class="week-nav">
-          <button class="btn-icon" data-week="prev">←</button>
+          <button class="btn-icon" data-week="prev" title="Semaine précédente">←</button>
           <span class="week-label">Semaine du ${pad(state.weekStart.getDate())}/${pad(state.weekStart.getMonth()+1)}</span>
-          <button class="btn-icon" data-week="next">→</button>
+          <button class="btn-icon" data-week="next" title="Semaine suivante">→</button>
           <button class="btn-sec" data-week="today">Aujourd'hui</button>
         </div>
       </div>
@@ -1235,10 +1280,11 @@ function pagePlanning() {
               const d = addDays(state.weekStart, i);
               const isToday = dateISO(d) === todayISO;
               const fer = holidayFor(d);
-              return `<div class="plan-cell head ${fer?'ferie':''}">
+              const vac = schoolHolidayFor(d);
+              return `<div class="plan-cell head ${fer?'ferie':''} ${vac && !fer?'vacances':''}">
                 <div class="day">${DAYS_SHORT[i]}</div>
                 <div class="date ${isToday?'today':''}">${d.getDate()}</div>
-                ${fer ? `<div class="ferie-tag" title="${esc(fer.long)}">${esc(fer.short)}</div>` : ''}
+                ${fer ? `<div class="ferie-tag" title="${esc(fer.long)}">${esc(fer.short)}</div>` : (vac ? `<div class="vacances-tag" title="Vacances scolaires Zone C">🎒 ${esc(vac.name)}</div>` : '')}
               </div>`;
             }).join('')}
             ${actives.map(e => {
@@ -1247,22 +1293,29 @@ function pagePlanning() {
                 const shifts = state.shifts[`${e.id}_${d}_${wk}`] || [];
                 shifts.forEach(s => empWeekH += shiftHours(s));
               }
-              const gap = empWeekH - (e.heures || 35);
+              const contractH = e.heures || 35;
+              const gap = empWeekH - contractH;
+              const gapClass = Math.abs(gap) < 0.5 ? 'gap-ok' : (gap > 0 ? 'gap-over' : 'gap-under');
+              const empWeekHStr = empWeekH > 0 ? (Math.floor(empWeekH) + 'h' + (empWeekH % 1 > 0 ? pad(Math.round((empWeekH % 1) * 60)) : '')) : '0h';
               return `
               <div class="plan-cell emp">
-                <div class="row" style="gap:10px;align-items:flex-start;">
+                <div class="emp-row">
                   <div class="av-emp sm">${initials(e)}</div>
-                  <div style="flex:1;min-width:0;">
+                  <div class="emp-nm-wrap">
                     <div class="nm">${esc(e.prenom)}</div>
-                    <div class="ct">${e.heures}h · <span style="color:${Math.abs(gap)<1?'var(--c-ink-4)':(gap>0?'var(--c-warn)':'var(--c-alert)')};">${empWeekH.toFixed(1)}h</span></div>
+                    <div class="emp-stats">
+                      <span class="chip-tiny">${contractH}h</span>
+                      <span class="chip-tiny ${gapClass}">${empWeekHStr}</span>
+                    </div>
                   </div>
                 </div>
               </div>
               ${[0,1,2,3,4,5,6].map(d => {
                 const dateD = addDays(state.weekStart, d);
                 const ferD = holidayFor(dateD);
+                const vacD = schoolHolidayFor(dateD);
                 const shifts = (state.shifts[`${e.id}_${d}_${wk}`] || []).map(normShift);
-                return `<div class="plan-cell cell ${shifts.length?'has':''} ${ferD?'ferie-cell':''}" data-edit="${e.id}_${d}">
+                return `<div class="plan-cell cell ${shifts.length?'has':''} ${ferD?'ferie-cell':''} ${vacD && !ferD?'vacances-cell':''}" data-edit="${e.id}_${d}">
                   ${shifts.map(s => renderShiftCell(s)).join('')}
                 </div>`;
               }).join('')}
@@ -1283,9 +1336,19 @@ function renderShiftCell(s) {
     const lt = LEAVE_TYPES[s.leaveType] || { short: s.label || 'Absent', color: 'leave-justifie' };
     return `<div class="shift ${lt.color}">${esc(lt.short)}</div>`;
   }
-  const dur = Math.round(shiftHours(s) * 60);
-  const pauseStr = s.pauseDuration ? `<span class="pause">☕ ${s.pauseDuration}mn${s.pauseStart?` (${s.pauseStart}–${s.pauseEnd})`:''}</span>` : '';
-  return `<div class="shift ${s.type}"><span class="l">${esc(s.label || (s.type==='midi'?'Ouverture':s.type==='soir'?'Fermeture':'Aller/Retour'))}</span><span class="t">${s.start}–${s.end}</span><span class="dur">${dur}mn</span>${pauseStr}</div>`;
+  const totalMin = Math.round(shiftHours(s) * 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  const durStr = h > 0 ? (m > 0 ? `${h}h${pad(m)}` : `${h}h`) : `${m}mn`;
+  const label = s.label || (s.type==='midi'?'Ouverture':s.type==='soir'?'Fermeture':'Aller/Retour');
+  const pauseStr = s.pauseDuration ? ` (${s.pauseDuration}mn)` : '';
+  return `
+    <div class="shift ${s.type}">
+      <div class="shift-title">${esc(label)}</div>
+      <div class="shift-time">${s.start} – ${s.end}${pauseStr}</div>
+      <div class="shift-dur">${durStr}</div>
+    </div>
+  `;
 }
 
 function bindPlanning() {
@@ -1407,17 +1470,31 @@ function openShiftEditor(empId, dayIdx) {
   const sh = existing[0] || { type: 'soir', start: '17:00', end: '23:00', pauseDuration: 0 };
   const d = addDays(state.weekStart, dayIdx);
   const currentLeave = sh.leaveType || '';
+  const initialDate = dateISO(d);
 
   const body = `
     <div class="uppercase-eyebrow" style="margin-bottom:4px;">${esc(e.prenom)} ${esc(e.nom)}</div>
-    <div style="font-family:var(--f-display);font-size:22px;letter-spacing:-0.01em;margin-bottom:18px;">${fmtDateLong(d)}</div>
+    <div style="font-family:var(--f-display);font-size:24px;letter-spacing:-0.015em;margin-bottom:20px;color:var(--c-ink);">${fmtDateLong(d)}</div>
 
-    <div class="field full">
-      <label class="field-label">Statut</label>
-      <select class="input" id="shLeaveType">
-        <option value="">— Travaille (shift normal) —</option>
-        ${Object.entries(LEAVE_TYPES).map(([k,v]) => `<option value="${k}" ${currentLeave===k?'selected':''}>${esc(v.label)}</option>`).join('')}
-      </select>
+    <div class="form-grid">
+      <div class="field full">
+        <label class="field-label">Date</label>
+        <input class="input" id="shDate" type="date" value="${initialDate}">
+      </div>
+
+      <div class="field full">
+        <label class="field-label">Statut</label>
+        <select class="input" id="shLeaveType">
+          <option value="">— Travaille (shift normal) —</option>
+          ${Object.entries(LEAVE_TYPES).map(([k,v]) => `<option value="${k}" ${currentLeave===k?'selected':''}>${esc(v.label)}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="field full" id="shRangeWrap" ${currentLeave?'':'style="display:none;"'}>
+        <label class="field-label">Date de fin (optionnel, pour étaler sur plusieurs jours)</label>
+        <input class="input" id="shDateEnd" type="date" value="${initialDate}">
+        <div class="text-mute" style="font-size:11.5px;margin-top:6px;">Laisse identique pour 1 seul jour, ou choisis une date plus tardive pour créer l'absence sur toute la période.</div>
+      </div>
     </div>
 
     <div id="shFieldsWrap" ${currentLeave?'style="display:none;"':''}>
@@ -1452,7 +1529,7 @@ function openShiftEditor(empId, dayIdx) {
         </div>
         <div class="field full">
           <label class="field-label">Libellé (optionnel)</label>
-          <input class="input" id="shLabel" placeholder="ex: Patron, Renfort..." value="${esc(sh.label || '')}">
+          <input class="input" id="shLabel" placeholder="ex: Cuisine, Salle, Renfort..." value="${esc(sh.label || '')}">
         </div>
       </div>
     </div>
@@ -1462,7 +1539,7 @@ function openShiftEditor(empId, dayIdx) {
     ${existing.length ? `<button class="btn-danger" id="shDel">Supprimer</button>` : ''}
     <div class="spacer"></div>
     <button class="btn-sec" data-close>Annuler</button>
-    <button class="btn-pri" id="shSave" style="width:auto;padding:10px 18px;">Enregistrer</button>
+    <button class="btn-pri" id="shSave" style="width:auto;">Enregistrer</button>
   `;
 
   const { close } = openModal({ title: 'Édition du jour', body, footer });
@@ -1476,11 +1553,25 @@ function openShiftEditor(empId, dayIdx) {
   }));
 
   $('#shLeaveType').addEventListener('change', ev => {
-    $('#shFieldsWrap').style.display = ev.target.value ? 'none' : '';
+    const isLeave = !!ev.target.value;
+    $('#shFieldsWrap').style.display = isLeave ? 'none' : '';
+    $('#shRangeWrap').style.display = isLeave ? '' : 'none';
+    if (isLeave) $('#shDateEnd').value = $('#shDate').value;
+  });
+
+  // Sync end date with start when start changes (default to same day)
+  $('#shDate').addEventListener('change', ev => {
+    const endVal = $('#shDateEnd').value;
+    if (!endVal || endVal < ev.target.value) {
+      $('#shDateEnd').value = ev.target.value;
+    }
   });
 
   $('#shSave').addEventListener('click', () => {
     const leave = $('#shLeaveType').value;
+    const newDateISO = $('#shDate').value;
+    if (!newDateISO) { toast('Date invalide', 'error'); return; }
+
     let newSh;
     if (leave) {
       newSh = { leaveType: leave, label: LEAVE_TYPES[leave].label };
@@ -1498,15 +1589,49 @@ function openShiftEditor(empId, dayIdx) {
       if (pe) newSh.pauseEnd = pe;
       if (lbl) newSh.label = lbl;
     }
-    state.shifts[key] = [newSh];
-    fbSave(`shifts/${key}`, [newSh]);
-    toast('Enregistré', 'good');
+
+    // Delete original entry if date changed (we move it)
+    const dateMoved = newDateISO !== initialDate;
+    if (dateMoved || existing.length) {
+      delete state.shifts[key];
+      fbSave(`shifts/${key}`, null);
+    }
+
+    // Determine days to save (range support for leaves)
+    const endDateISO = leave ? ($('#shDateEnd').value || newDateISO) : newDateISO;
+    if (endDateISO < newDateISO) { toast('La date de fin doit être ≥ date de début', 'error'); return; }
+
+    const daysToSave = [];
+    let cur = new Date(newDateISO + 'T00:00:00');
+    const end = new Date(endDateISO + 'T00:00:00');
+    while (cur <= end) {
+      daysToSave.push(new Date(cur));
+      cur = addDays(cur, 1);
+    }
+
+    daysToSave.forEach(targetDate => {
+      const targetMon = getMonday(targetDate);
+      const targetWk = weekKey(targetMon);
+      const targetDayIdx = (targetDate.getDay() + 6) % 7;
+      const newKey = `${empId}_${targetDayIdx}_${targetWk}`;
+      state.shifts[newKey] = [newSh];
+      fbSave(`shifts/${newKey}`, [newSh]);
+    });
+
+    // If we moved to a different week, jump there to show the result
+    if (dateMoved) {
+      state.weekStart = getMonday(new Date(newDateISO + 'T00:00:00'));
+    }
+
+    const msg = daysToSave.length > 1 ? `${daysToSave.length} jours enregistrés` : 'Enregistré';
+    toast(msg, 'good');
     close();
     render();
   });
 
   if (existing.length) {
     $('#shDel').addEventListener('click', () => {
+      if (!confirm('Supprimer ce shift ?')) return;
       delete state.shifts[key];
       fbSave(`shifts/${key}`, null);
       toast('Supprimé', '');
@@ -1701,31 +1826,61 @@ function pageHours() {
   const weeks = [];
   for (let i = 7; i >= 0; i--) weeks.push(addDays(state.weekStart, -7 * i));
 
+  // Team-wide totals for KPI cards
+  const teamTotalBrut = data.reduce((s,d) => s + d.totalBrutPlanifie, 0);
+  const teamTotalH = data.reduce((s,d) => s + d.normalH + d.supplH25 + d.supplH50, 0);
+  const teamSuppH = data.reduce((s,d) => s + d.supplH25 + d.supplH50, 0);
+  const teamCP = data.reduce((s,d) => s + d.leaves.cp, 0);
+
   return `
     <div class="page-head">
       <div>
-        <div class="uppercase-eyebrow">Suivi des heures · Paie</div>
-        <h1 class="h-1">Heures et préparation paie</h1>
+        <div class="uppercase-eyebrow">Heures</div>
+        <h1 class="h-1">Préparation paie</h1>
+        <div class="text-mute" style="margin-top:6px;font-size:13px;">Récapitulatif mensuel pour transmission au cabinet comptable</div>
       </div>
       <div class="page-actions">
         <div class="week-nav">
-          <button class="btn-icon" data-hnav="prev">←</button>
-          <span class="week-label" style="text-transform:capitalize;min-width:170px;">${MONTHS_FR[month]} ${year}</span>
-          <button class="btn-icon" data-hnav="next">→</button>
+          <button class="btn-icon" data-hnav="prev" title="Mois précédent">←</button>
+          <span class="week-label" style="text-transform:capitalize;min-width:170px;font-family:var(--f-display);font-size:16px;letter-spacing:-0.01em;">${MONTHS_FR[month]} ${year}</span>
+          <button class="btn-icon" data-hnav="next" title="Mois suivant">→</button>
           <button class="btn-sec" data-hnav="today">Mois en cours</button>
         </div>
       </div>
     </div>
 
-    <div class="row" style="margin-bottom:14px;gap:8px;flex-wrap:wrap;">
-      <button class="btn-pri" id="exportPaieCsv" style="width:auto;padding:9px 16px;">↓ Export paie (CSV)</button>
-      <button class="btn-sec" id="exportPaieDetailled">↓ Export détaillé (CSV)</button>
+    <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);">
+      <div class="kpi">
+        <div class="kpi-label">Masse salariale brute</div>
+        <div class="kpi-value">${Math.round(teamTotalBrut).toLocaleString('fr-FR')}<span style="font-size:18px;color:var(--c-ink-4);"> €</span></div>
+        <div class="kpi-meta">Estimation pour ${MONTHS_FR[month]}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Total heures</div>
+        <div class="kpi-value">${Math.round(teamTotalH)}<span style="font-size:18px;color:var(--c-ink-4);"> h</span></div>
+        <div class="kpi-meta">${data.length} salarié${data.length>1?'s':''}</div>
+      </div>
+      <div class="kpi ${teamSuppH > 0 ? 'warn' : ''}">
+        <div class="kpi-label">Heures supplémentaires</div>
+        <div class="kpi-value">${teamSuppH.toFixed(1)}<span style="font-size:18px;color:var(--c-ink-4);"> h</span></div>
+        <div class="kpi-meta">au-delà du contrat</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Jours de CP pris</div>
+        <div class="kpi-value">${teamCP}</div>
+        <div class="kpi-meta">cumul équipe</div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-bottom:16px;gap:8px;flex-wrap:wrap;">
+      <button class="btn-pri" id="exportPaieCsv" style="width:auto;">↓ Export paie</button>
+      <button class="btn-sec" id="exportPaieDetailled">↓ Export détaillé</button>
     </div>
 
     <div class="panel">
       <div class="panel-head">
-        <h3>Récap mensuel pour la paie</h3>
-        <span class="text-mute" style="font-size:11.5px;">HCR · sup +25% (36h→43h) · sup +50% (>43h)</span>
+        <h3>Récap par salarié</h3>
+        <span class="text-mute" style="font-size:11.5px;">HCR · sup +25% (36→43h) · sup +50% (>43h)</span>
       </div>
       <div class="panel-body nopad" style="overflow-x:auto;">
         <table class="tbl tbl-compact">
@@ -1755,15 +1910,15 @@ function pageHours() {
               return `
                 <tr>
                   <td>
-                    <div class="emp-cell">
+                    <div class="with-av">
                       <div class="av-emp sm">${initials(d.emp)}</div>
-                      <div>
-                        <div class="emp-cell-name">${esc(d.emp.prenom)} ${esc(d.emp.nom)}</div>
-                        <div class="emp-cell-meta">${esc(d.emp.poste||'')}</div>
+                      <div class="stack">
+                        <div style="font-weight:600;">${esc(d.emp.prenom)} ${esc(d.emp.nom)}</div>
+                        <div class="sub" style="text-decoration:none;cursor:default;">${esc(d.emp.poste||'—')}</div>
                       </div>
                     </div>
                   </td>
-                  <td><span class="chip">${esc(d.emp.contrat||'—')} ${d.n.heures||0}h</span></td>
+                  <td><span class="chip">${esc(d.emp.contrat||'—')} · ${d.n.heures||0}h</span></td>
                   <td class="mono tabular">${d.n.taux ? d.n.taux.toFixed(2)+' €' : '—'}</td>
                   <td class="mono tabular text-mute">${contractMonthly} h</td>
                   <td class="mono tabular"><strong>${d.normalH.toFixed(1)} h</strong></td>
@@ -1776,21 +1931,21 @@ function pageHours() {
                   <td class="mono tabular">${d.leaves.arret_maladie || '—'}</td>
                   <td class="mono tabular">${totalAbs || '—'}</td>
                   <td class="mono tabular">${d.ferieWorked || '—'}</td>
-                  <td><button class="btn-ghost" data-detail-emp="${d.emp.id}">Détail →</button></td>
+                  <td><button class="btn-ghost" data-detail-emp="${d.emp.id}">→</button></td>
                 </tr>
               `;
             }).join('')}
             ${data.length > 0 ? `
-              <tr style="background:#f5f5f5;font-weight:600;">
-                <td>TOTAL ÉQUIPE</td>
+              <tr class="row-total">
+                <td><strong style="font-family:var(--f-display);font-size:15px;letter-spacing:-0.01em;">Total équipe</strong></td>
                 <td>—</td>
                 <td>—</td>
                 <td class="mono tabular">${data.reduce((s,d) => s + (d.n.heures||35) * 52/12, 0).toFixed(1)} h</td>
                 <td class="mono tabular">${data.reduce((s,d) => s + d.normalH, 0).toFixed(1)} h</td>
                 <td class="mono tabular">${data.reduce((s,d) => s + d.supplH25, 0).toFixed(1)} h</td>
                 <td class="mono tabular">${data.reduce((s,d) => s + d.supplH50, 0).toFixed(1)} h</td>
-                <td class="mono tabular">${data.reduce((s,d) => s + d.normalH + d.supplH25 + d.supplH50, 0).toFixed(1)} h</td>
-                <td class="mono tabular">${data.reduce((s,d) => s + d.totalBrutPlanifie, 0).toFixed(2)} €</td>
+                <td class="mono tabular"><strong>${teamTotalH.toFixed(1)} h</strong></td>
+                <td class="mono tabular"><strong>${teamTotalBrut.toFixed(2)} €</strong></td>
                 <td class="mono tabular">${data.reduce((s,d) => s + (d.navigoMensuel||0), 0).toFixed(2)} €</td>
                 <td class="mono tabular">${data.reduce((s,d) => s + d.leaves.cp, 0) || '—'}</td>
                 <td class="mono tabular">${data.reduce((s,d) => s + d.leaves.arret_maladie, 0) || '—'}</td>
@@ -2079,35 +2234,60 @@ function pageEmployees() {
     if (a.statut !== b.statut) return a.statut === 'Actif' ? -1 : 1;
     return (a.prenom + a.nom).localeCompare(b.prenom + b.nom);
   });
+  const actifs = sorted.filter(e => e.statut === 'Actif').length;
   return `
     <div class="page-head">
       <div>
         <div class="uppercase-eyebrow">Équipe</div>
-        <h1 class="h-1">Salariés (${state.employees.length})</h1>
+        <h1 class="h-1">Salariés</h1>
+        <div class="text-mute" style="margin-top:6px;font-size:13px;">${actifs} actif${actifs>1?'s':''} · ${state.employees.length} total</div>
       </div>
       <div class="page-actions">
-        <button class="btn-pri" id="addEmp" style="width:auto;padding:10px 16px;">+ Nouveau salarié</button>
+        <button class="btn-pri" id="addEmp" style="width:auto;">+ Ajouter un collaborateur</button>
       </div>
     </div>
 
     <div class="panel">
       <div class="panel-body nopad">
         <table class="tbl">
-          <thead><tr><th>Salarié</th><th>Poste</th><th>Contrat</th><th>Heures</th><th>Email</th><th>Statut</th><th>Profil</th><th></th></tr></thead>
+          <thead><tr>
+            <th>Collaborateur</th>
+            <th>Rôle</th>
+            <th>Contrat</th>
+            <th>Email</th>
+            <th>Mobile</th>
+            <th>Statut</th>
+            <th></th>
+          </tr></thead>
           <tbody>
             ${sorted.map(e => {
               const n = normEmp(e);
               const complete = isProfileComplete(n);
+              const inactif = e.statut !== 'Actif';
+              const poste = e.poste || 'Non renseigné';
+              const posteChipClass = !e.poste ? '' : (e.poste.toLowerCase().includes('cuisinier') ? 'good' : (e.poste.toLowerCase().includes('responsable') ? 'accent' : ''));
               return `
-              <tr>
-                <td><div class="emp-cell"><div class="av-emp">${initials(e)}</div><div><div class="emp-cell-name">${esc(e.prenom)} ${esc(e.nom)}</div><div class="emp-cell-meta">${esc(n.telMobile||'—')}</div></div></div></td>
-                <td>${esc(e.poste||'—')}</td>
-                <td><span class="chip">${esc(e.contrat||'—')}</span></td>
-                <td class="mono tabular">${e.heures||0}h</td>
-                <td class="mono" style="font-size:12px;">${esc(n.email||'—')}</td>
-                <td><span class="status-dot ${e.statut==='Actif'?'on':'off'}">${esc(e.statut||'—')}</span></td>
-                <td>${complete ? '<span class="chip good" style="font-size:10.5px;">✓ Complet</span>' : '<span class="chip warn" style="font-size:10.5px;">À compléter</span>'}</td>
-                <td><button class="btn-ghost" data-view-emp="${e.id}">Voir →</button></td>
+              <tr class="row-clickable" data-view-emp="${e.id}">
+                <td>
+                  <div class="with-av">
+                    <div class="av-emp">${initials(e)}</div>
+                    <div class="stack">
+                      <div style="font-weight:600;">${esc(e.prenom)} ${esc(e.nom)}</div>
+                      <div class="sub">${e.poste ? esc(e.poste) : 'Non renseigné'}</div>
+                    </div>
+                  </div>
+                </td>
+                <td><span class="chip ${posteChipClass}" style="font-size:11.5px;">${esc(poste)}</span></td>
+                <td>
+                  <div class="stack">
+                    <span style="font-weight:500;">${esc(e.contrat||'—')}</span>
+                    <span class="sub" style="text-decoration:none;cursor:default;">${e.heures||0}h / sem</span>
+                  </div>
+                </td>
+                <td style="font-size:12.5px;color:var(--c-ink-3);">${esc(n.email||'Non renseigné')}</td>
+                <td style="font-size:12.5px;color:var(--c-ink-3);">${esc(n.telMobile||'Non renseigné')}</td>
+                <td>${inactif ? '<span class="chip">Inactif</span>' : (complete ? '<span class="chip good">Acceptée</span>' : '<span class="chip warn">À compléter</span>')}</td>
+                <td style="text-align:right;color:var(--c-ink-4);font-size:18px;">›</td>
               </tr>
             `}).join('')}
           </tbody>
@@ -2189,15 +2369,15 @@ function pageEmployeeDetail() {
     <div class="emp-header">
       <div class="emp-header-top">
         <div class="av-emp lg">${initials(e)}</div>
-        <div style="flex:1;">
+        <div style="flex:1;min-width:0;">
           <div class="emp-header-name">${esc(e.prenom)} ${esc(e.nom)}</div>
-          <div class="emp-header-sub">${esc(e.poste||'—')} · ${esc(e.contrat||'—')} · ${e.heures||0}h</div>
+          <div class="emp-header-sub">${esc(e.poste||'Non renseigné')} · ${esc(e.contrat||'—')} · ${e.heures||0}h / sem</div>
         </div>
-        <span class="status-dot ${e.statut==='Actif'?'on':'off'}" style="background:rgba(255,255,255,.15);color:#fff;">${esc(e.statut||'—')}</span>
+        <span class="chip ${e.statut==='Actif'?'good':''}">${esc(e.statut||'—')}</span>
       </div>
       <div class="emp-header-grid">
         <div><div class="ehg-label">Début contrat</div><div class="ehg-value">${n.contratDebut ? fmtDateShort(n.contratDebut) : '—'}</div></div>
-        <div><div class="ehg-label">Fin contrat</div><div class="ehg-value">${n.contratFin ? fmtDateShort(n.contratFin) : '—'}</div></div>
+        <div><div class="ehg-label">Fin contrat</div><div class="ehg-value">${n.contratFin ? fmtDateShort(n.contratFin) : 'Indéterminé'}</div></div>
         <div><div class="ehg-label">Type</div><div class="ehg-value">${esc(e.contrat||'—')}</div></div>
         <div><div class="ehg-label">Établissement</div><div class="ehg-value">Man'ouché</div></div>
         <div><div class="ehg-label">Solde CP</div><div class="ehg-value">${(n.cpAcquisN - n.cpPrisN + n.cpAcquisNm1 - n.cpPrisNm1).toFixed(1)} j</div></div>
