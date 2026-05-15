@@ -51,6 +51,169 @@ function normShift(s) {
 }
 function isLeave(s) { return !!(s && (s.leaveType || s.absent || s.conge)); }
 
+// ─────────── JOURS FÉRIÉS (France) ───────────
+// Calcul de Pâques — algorithme de Butcher/Meeus
+function easterDate(year) {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(year, month - 1, day);
+}
+
+function holidaysForYear(year) {
+  const e = easterDate(year);
+  const easterMon = new Date(e); easterMon.setDate(e.getDate() + 1);
+  const ascension = new Date(e); ascension.setDate(e.getDate() + 39);
+  const pentecost = new Date(e); pentecost.setDate(e.getDate() + 50);
+  return {
+    [`${year}-01-01`]: { short: "Jour de l'An",      long: "Jour de l'An" },
+    [dateISO(easterMon)]: { short: 'Lundi de Pâques',long: 'Lundi de Pâques' },
+    [`${year}-05-01`]: { short: 'Fête du Travail',   long: 'Fête du Travail' },
+    [`${year}-05-08`]: { short: 'Victoire 1945',     long: 'Victoire 1945' },
+    [dateISO(ascension)]: { short: 'Ascension',      long: "Jeudi de l'Ascension" },
+    [dateISO(pentecost)]: { short: 'L. Pentecôte',   long: 'Lundi de Pentecôte' },
+    [`${year}-07-14`]: { short: '14 Juillet',        long: 'Fête nationale' },
+    [`${year}-08-15`]: { short: 'Assomption',        long: 'Assomption' },
+    [`${year}-11-01`]: { short: 'Toussaint',         long: 'Toussaint' },
+    [`${year}-11-11`]: { short: '11 Novembre',       long: 'Armistice 1918' },
+    [`${year}-12-25`]: { short: 'Noël',              long: 'Noël' },
+  };
+}
+const _holidayCache = {};
+function holidayFor(date) {
+  const y = date.getFullYear();
+  if (!_holidayCache[y]) _holidayCache[y] = holidaysForYear(y);
+  return _holidayCache[y][dateISO(date)] || null;
+}
+
+// ─────────── BROUILLONS / PUBLICATIONS ───────────
+function weekIsPublished(wk) {
+  if (state.publications[wk]) return true;
+  // Les semaines déjà passées (de plus de 2 jours) sont visibles
+  // automatiquement — pratique pour les données historiques importées
+  const wkDate = new Date(wk);
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const wkEnd = new Date(wkDate); wkEnd.setDate(wkDate.getDate() + 6);
+  return wkEnd < today; // semaine complètement passée
+}
+
+// ─────────── EXPORTS ───────────
+function csvEsc(s) {
+  s = String(s ?? '');
+  if (s.includes(';') || s.includes('"') || s.includes('\n') || s.includes(',')) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function exportPlanningCSV() {
+  const wk = weekKey(state.weekStart);
+  const lines = ['Salarié;Poste;Date;Jour;Statut;Type;Début;Fin;Pause (mn);Heures;Libellé;Férié'];
+  const actives = state.employees.filter(e => e.statut === 'Actif');
+
+  actives.forEach(emp => {
+    for (let d = 0; d < 7; d++) {
+      const date = addDays(state.weekStart, d);
+      const fer = holidayFor(date);
+      const ferStr = fer ? fer.long : '';
+      const shifts = (state.shifts[`${emp.id}_${d}_${wk}`] || []).map(normShift);
+      if (shifts.length === 0) {
+        lines.push([
+          csvEsc(emp.prenom + ' ' + emp.nom),
+          csvEsc(emp.poste || ''),
+          dateISO(date),
+          DAYS[d],
+          'Repos',
+          '', '', '', '0', '0', '',
+          csvEsc(ferStr)
+        ].join(';'));
+      } else {
+        shifts.forEach(s => {
+          if (s.leaveType) {
+            const lt = LEAVE_TYPES[s.leaveType];
+            lines.push([
+              csvEsc(emp.prenom + ' ' + emp.nom),
+              csvEsc(emp.poste || ''),
+              dateISO(date),
+              DAYS[d],
+              csvEsc(lt?.label || s.leaveType),
+              '', '', '', '0', '0',
+              csvEsc(s.label || ''),
+              csvEsc(ferStr)
+            ].join(';'));
+          } else {
+            lines.push([
+              csvEsc(emp.prenom + ' ' + emp.nom),
+              csvEsc(emp.poste || ''),
+              dateISO(date),
+              DAYS[d],
+              'Travaille',
+              s.type || '',
+              s.start || '',
+              s.end || '',
+              String(s.pauseDuration || 0),
+              shiftHours(s).toFixed(2).replace('.', ','),
+              csvEsc(s.label || ''),
+              csvEsc(ferStr)
+            ].join(';'));
+          }
+        });
+      }
+    }
+  });
+
+  // Section totaux
+  lines.push('');
+  lines.push('TOTAUX SEMAINE');
+  lines.push('Salarié;Contrat;Heures planifiées;Écart contrat');
+  actives.forEach(emp => {
+    let h = 0;
+    for (let d = 0; d < 7; d++) {
+      (state.shifts[`${emp.id}_${d}_${wk}`] || []).forEach(s => h += shiftHours(s));
+    }
+    const gap = h - (emp.heures || 35);
+    lines.push([
+      csvEsc(emp.prenom + ' ' + emp.nom),
+      (emp.heures || 35) + 'h',
+      h.toFixed(2).replace('.', ','),
+      (gap >= 0 ? '+' : '') + gap.toFixed(2).replace('.', ',')
+    ].join(';'));
+  });
+
+  const csv = lines.join('\r\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `planning_${wk}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast('CSV téléchargé', 'good');
+}
+
+function exportPlanningPDF() {
+  document.body.classList.add('printing');
+  // Brief delay to let the class apply
+  setTimeout(() => {
+    window.print();
+    setTimeout(() => document.body.classList.remove('printing'), 500);
+  }, 100);
+}
+
 // Seed planning (template based on the RH_ULTIME schedule) — used by "Charger un planning de démarrage"
 const SEED_SHIFTS = {
   // Ahmad Yaggi (3)
@@ -750,6 +913,14 @@ function pagePlanning() {
     }
   });
 
+  // Jours fériés de la semaine
+  const weekFeries = [];
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(state.weekStart, i);
+    const f = holidayFor(d);
+    if (f) weekFeries.push({ date: d, dayIdx: i, ...f });
+  }
+
   return `
     <div class="page-head">
       <div>
@@ -759,7 +930,9 @@ function pagePlanning() {
           <span class="chip">${Math.round(totalH)} h planifiées</span>
           ${isPublished
             ? `<span class="chip good">✓ Publié ${new Date(pub.publishedAt).toLocaleDateString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>`
-            : `<span class="chip warn">Non publié</span>`}
+            : (weekShiftCount > 0
+              ? `<span class="chip draft">● BROUILLON — invisible pour les salariés</span>`
+              : `<span class="chip warn">Non publié</span>`)}
         </div>
       </div>
       <div class="page-actions">
@@ -772,11 +945,24 @@ function pagePlanning() {
       </div>
     </div>
 
-    <div class="row" style="gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+    ${weekFeries.length ? `
+      <div class="ferie-banner">
+        <span class="ferie-icon">🇫🇷</span>
+        <div>
+          <strong>Jour${weekFeries.length>1?'s':''} férié${weekFeries.length>1?'s':''} cette semaine</strong>
+          <div style="font-size:12px;margin-top:2px;">${weekFeries.map(f => `${esc(f.long)} — ${DAYS[f.dayIdx]} ${f.date.getDate()}/${pad(f.date.getMonth()+1)}`).join(' · ')}</div>
+        </div>
+      </div>
+    ` : ''}
+
+    <div class="row plan-actions">
       <button class="btn-sec" id="dupFromPrev" ${prevWeekShiftCount > 0 ? '' : 'disabled style="opacity:.4;"'}>↺ Dupliquer la semaine précédente</button>
       <button class="btn-sec" id="clearWeek" ${weekShiftCount > 0 ? '' : 'disabled style="opacity:.4;"'}>🗑 Vider la semaine</button>
+      <button class="btn-sec" id="exportCsv" ${weekShiftCount > 0 ? '' : 'disabled style="opacity:.4;"'}>↓ CSV</button>
+      <button class="btn-sec" id="exportPdf" ${weekShiftCount > 0 ? '' : 'disabled style="opacity:.4;"'}>↓ PDF</button>
       <div class="spacer"></div>
-      <button class="btn-pri" id="publishBtn" style="width:auto;padding:9px 16px;">
+      ${isPublished ? `<button class="btn-sec" id="unpublishBtn">Dépublier (repasser en brouillon)</button>` : ''}
+      <button class="btn-pri" id="publishBtn" style="width:auto;padding:9px 16px;" ${weekShiftCount === 0 ? 'disabled style="opacity:.4;"' : ''}>
         ${isPublished ? '🔄 Republier le planning' : '📢 Publier le planning'}
       </button>
     </div>
@@ -798,10 +984,14 @@ function pagePlanning() {
             ${[0,1,2,3,4,5,6].map(i => {
               const d = addDays(state.weekStart, i);
               const isToday = dateISO(d) === todayISO;
-              return `<div class="plan-cell head"><div class="day">${DAYS_SHORT[i]}</div><div class="date ${isToday?'today':''}">${d.getDate()}</div></div>`;
+              const fer = holidayFor(d);
+              return `<div class="plan-cell head ${fer?'ferie':''}">
+                <div class="day">${DAYS_SHORT[i]}</div>
+                <div class="date ${isToday?'today':''}">${d.getDate()}</div>
+                ${fer ? `<div class="ferie-tag" title="${esc(fer.long)}">${esc(fer.short)}</div>` : ''}
+              </div>`;
             }).join('')}
             ${actives.map(e => {
-              // total heures de la semaine pour cet employé
               let empWeekH = 0;
               for (let d = 0; d < 7; d++) {
                 const shifts = state.shifts[`${e.id}_${d}_${wk}`] || [];
@@ -819,8 +1009,10 @@ function pagePlanning() {
                 </div>
               </div>
               ${[0,1,2,3,4,5,6].map(d => {
+                const dateD = addDays(state.weekStart, d);
+                const ferD = holidayFor(dateD);
                 const shifts = (state.shifts[`${e.id}_${d}_${wk}`] || []).map(normShift);
-                return `<div class="plan-cell cell ${shifts.length?'has':''}" data-edit="${e.id}_${d}">
+                return `<div class="plan-cell cell ${shifts.length?'has':''} ${ferD?'ferie-cell':''}" data-edit="${e.id}_${d}">
                   ${shifts.map(s => renderShiftCell(s)).join('')}
                 </div>`;
               }).join('')}
@@ -870,6 +1062,15 @@ function bindPlanning() {
 
   const pubBtn = $('#publishBtn');
   if (pubBtn) pubBtn.addEventListener('click', () => publishWeek());
+
+  const unpubBtn = $('#unpublishBtn');
+  if (unpubBtn) unpubBtn.addEventListener('click', () => unpublishWeek());
+
+  const csvBtn = $('#exportCsv');
+  if (csvBtn) csvBtn.addEventListener('click', () => exportPlanningCSV());
+
+  const pdfBtn = $('#exportPdf');
+  if (pdfBtn) pdfBtn.addEventListener('click', () => exportPlanningPDF());
 }
 
 function publishWeek() {
@@ -877,7 +1078,16 @@ function publishWeek() {
   const payload = { publishedAt: new Date().toISOString(), by: 'admin' };
   state.publications[wk] = payload;
   fbSave(`publications/${wk}`, payload);
-  toast(`Planning publié — les salariés sont notifiés`, 'good');
+  toast(`Planning publié — visible par les salariés`, 'good');
+  render();
+}
+
+function unpublishWeek() {
+  const wk = weekKey(state.weekStart);
+  if (!confirm(`Repasser ce planning en brouillon ?\n\nIl ne sera plus visible par les salariés.`)) return;
+  delete state.publications[wk];
+  fbSave(`publications/${wk}`, null);
+  toast('Repassé en brouillon', '');
   render();
 }
 
@@ -1120,9 +1330,11 @@ function pageMonth() {
           ${DAYS_SHORT.map(d => `<div class="mc head"><div class="day">${d}</div></div>`).join('')}
           ${daysData.map(d => {
             const isToday = dateISO(d.date) === todayISO;
+            const fer = holidayFor(d.date);
             return `
-              <div class="mc ${d.inMonth?'':'out'} ${isToday?'today':''}" data-mday="${dateISO(d.date)}">
+              <div class="mc ${d.inMonth?'':'out'} ${isToday?'today':''} ${fer?'ferie':''}" data-mday="${dateISO(d.date)}">
                 <div class="mc-date ${isToday?'today':''}">${d.date.getDate()}</div>
+                ${fer ? `<div class="mc-ferie" title="${esc(fer.long)}">${esc(fer.short)}</div>` : ''}
                 ${d.workers > 0 ? `<div class="mc-stat"><strong>${d.dayH.toFixed(1)}h</strong> · ${d.workers} pers.</div>` : ''}
                 ${d.leaves.length > 0 ? `<div class="mc-leaves">${d.leaves.map(l => `<span class="mc-leave ${LEAVE_TYPES[l.leaveType]?.color || ''}" title="${esc(l.emp.prenom)} — ${esc(LEAVE_TYPES[l.leaveType]?.label || '')}">${esc(l.emp.prenom.charAt(0))}</span>`).join('')}</div>` : ''}
               </div>
@@ -1574,7 +1786,8 @@ function empHome() {
   const iso = dateISO(now);
   const dayIdx = (now.getDay() + 6) % 7;
   const wk = weekKey(now);
-  const today = (state.shifts[`${empId}_${dayIdx}_${wk}`] || []).map(normShift);
+  const wkPublished = weekIsPublished(wk);
+  const today = wkPublished ? (state.shifts[`${empId}_${dayIdx}_${wk}`] || []).map(normShift) : [];
   const punches = state.punches[`${empId}_${iso}`] || [];
   const last = punches[punches.length-1];
   const ongoing = last && last.in && !last.out;
@@ -1585,7 +1798,8 @@ function empHome() {
   const todayLeave = today.find(s => s.leaveType);
 
   let statusText = '';
-  if (todayLeave) statusText = `Aujourd'hui : ${LEAVE_TYPES[todayLeave.leaveType]?.label || 'Absence'}`;
+  if (!wkPublished) statusText = `Planning de la semaine pas encore publié.`;
+  else if (todayLeave) statusText = `Aujourd'hui : ${LEAVE_TYPES[todayLeave.leaveType]?.label || 'Absence'}`;
   else if (today.length === 0) statusText = `Aucun shift prévu aujourd'hui.`;
   else if (ongoing) statusText = `Pointé à ${last.in} — en service.`;
   else if (last && last.out) statusText = `Dernier pointage : ${last.in} → ${last.out}.`;
@@ -1724,40 +1938,45 @@ function openSignalModal() {
 function empWeek() {
   const empId = state.user.empId;
   const wk = weekKey(state.weekStart);
+  const wkPublished = weekIsPublished(wk);
   const todayISO = dateISO(new Date());
   const wkEnd = addDays(state.weekStart, 6);
 
   let totalH = 0;
-  const cards = [0,1,2,3,4,5,6].map(i => {
+  const cards = !wkPublished ? '' : [0,1,2,3,4,5,6].map(i => {
     const d = addDays(state.weekStart, i);
     const iso = dateISO(d);
     const shifts = (state.shifts[`${empId}_${i}_${wk}`] || []).map(normShift);
     const isToday = iso === todayISO;
+    const fer = holidayFor(d);
     const hours = shifts.reduce((s, sh) => s + shiftHours(sh), 0);
     totalH += hours;
+    const ferieTag = fer ? `<span class="ferie-pill">🇫🇷 ${esc(fer.short)}</span>` : '';
     if (!shifts.length) {
-      return `<div class="day-card off ${isToday?'today':''}">
+      return `<div class="day-card off ${isToday?'today':''} ${fer?'ferie':''}">
         <div><div class="day-num">${d.getDate()}</div><div class="day-name">${DAYS_SHORT[i]}</div></div>
-        <div class="day-info"><div class="day-shift">Repos</div></div>
+        <div class="day-info"><div class="day-shift">Repos</div>${ferieTag}</div>
       </div>`;
     }
     return shifts.map(s => {
       if (s.leaveType) {
         const lt = LEAVE_TYPES[s.leaveType];
-        return `<div class="day-card ${isToday?'today':''}" style="border-left:3px solid currentColor;">
+        return `<div class="day-card ${isToday?'today':''} ${fer?'ferie':''}" style="border-left:3px solid currentColor;">
           <div><div class="day-num">${d.getDate()}</div><div class="day-name">${DAYS_SHORT[i]}</div></div>
           <div class="day-info">
             <div class="day-shift" style="font-family:var(--f-body);">${esc(lt?.label || 'Absence')}</div>
             <div class="day-meta">Non travaillé</div>
+            ${ferieTag}
           </div>
         </div>`;
       }
       return `
-      <div class="day-card ${isToday?'today':''}">
+      <div class="day-card ${isToday?'today':''} ${fer?'ferie':''}">
         <div><div class="day-num">${d.getDate()}</div><div class="day-name">${DAYS_SHORT[i]}</div></div>
         <div class="day-info">
           <div class="day-shift">${s.start} → ${s.end}</div>
           <div class="day-meta">${esc(s.label || (s.type==='midi'?'Service midi':s.type==='soir'?'Service soir':'Journée'))} · ${shiftHours(s).toFixed(1)} h${s.pauseDuration?` · pause ${s.pauseDuration}mn`:''}</div>
+          ${ferieTag}
         </div>
       </div>`;
     }).join('');
@@ -1778,7 +1997,15 @@ function empWeek() {
       <button class="btn-sec" data-week="next" style="padding:7px 12px;">→</button>
     </div>
 
-    ${cards}
+    ${wkPublished ? cards : `
+      <div class="panel" style="background:#fafafa;border-style:dashed;">
+        <div class="panel-body" style="text-align:center;padding:32px 18px;">
+          <div style="font-size:32px;margin-bottom:8px;">📋</div>
+          <div style="font-weight:500;margin-bottom:4px;">Planning non publié</div>
+          <div class="text-mute" style="font-size:12.5px;">Le planning de cette semaine n'a pas encore été publié par la direction. Reviens un peu plus tard.</div>
+        </div>
+      </div>
+    `}
   `;
 }
 
