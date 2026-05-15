@@ -271,7 +271,7 @@ function normEmp(e) {
     email: '', telMobile: '', telFixe: '', notifSMS: false,
     adresse: '', complementAdresse: '', codePostal: '', ville: '', pays: 'France',
     contratDebut: '', contratFin: '', periodeEssaiJours: 60,
-    remuneration: 0, joursTravailles: 5,
+    remuneration: 0, joursTravailles: 5, navigoMensuel: 0,
     dateSortie: '', motifSortie: '',
     cpAcquisN: e.cpAcquis ?? 25,
     cpPrisN: e.cpPris ?? 0,
@@ -384,14 +384,19 @@ function openModal({ title, body, footer, onClose }) {
       ${footer ? `<div class="modal-f">${footer}</div>` : ''}
     </div>`;
   document.body.appendChild(bg);
-  const close = () => { bg.remove(); onClose && onClose(); };
+  const close = () => { bg.remove(); onClose && onClose(); document.body.style.overflow = ''; };
+  document.body.style.overflow = 'hidden';
   bg.addEventListener('click', (e) => { if (e.target === bg) close(); });
-  $('[data-close]', bg).addEventListener('click', close);
+  $$('[data-close]', bg).forEach(b => b.addEventListener('click', close));
+  // Escape key to close
+  const escHandler = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler); } };
+  document.addEventListener('keydown', escHandler);
   return { bg, close };
 }
 
 // ─────────── FIREBASE ───────────
 let db = null;
+let storage = null;
 async function initFirebase() {
   if (typeof firebase === 'undefined') {
     console.warn('Firebase not available — local mode');
@@ -401,6 +406,7 @@ async function initFirebase() {
     if (!firebase.apps.length) firebase.initializeApp(FB_CONFIG);
     await firebase.auth().signInAnonymously();
     db = firebase.database();
+    if (firebase.storage) storage = firebase.storage();
     state.fbReady = true;
     return true;
   } catch (e) {
@@ -409,6 +415,54 @@ async function initFirebase() {
     return false;
   }
 }
+
+// ─────────── FIREBASE STORAGE — DOCUMENTS ───────────
+async function uploadEmployeeDoc(empId, file, category) {
+  if (!storage) { toast('Firebase Storage non disponible', 'error'); return null; }
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `employees/${empId}/${category}/${Date.now()}_${safeName}`;
+  try {
+    const snap = await storage.ref(path).put(file);
+    const url = await snap.ref.getDownloadURL();
+    return {
+      id: 'd' + Date.now(),
+      name: file.name, size: file.size, type: file.type,
+      category, path, url,
+      uploadedAt: new Date().toISOString(),
+    };
+  } catch (e) {
+    console.error('Upload failed', e);
+    toast('Échec upload : ' + (e.message || e.code), 'error', 6000);
+    return null;
+  }
+}
+
+async function deleteEmployeeDoc(path) {
+  if (!storage) return false;
+  try { await storage.ref(path).delete(); return true; }
+  catch (e) { console.warn('Delete from storage:', e.message); return true; }
+}
+
+function formatBytes(b) {
+  if (b < 1024) return b + ' o';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + ' Ko';
+  return (b/(1024*1024)).toFixed(1) + ' Mo';
+}
+
+const DOC_CATEGORIES = {
+  contrat:        { label: 'Contrat de travail',   icon: '📄' },
+  avenant:        { label: 'Avenant',              icon: '📝' },
+  fiche_paie:     { label: 'Fiche de paie',        icon: '💶' },
+  arret_maladie:  { label: 'Arrêt maladie',        icon: '🏥' },
+  navigo:         { label: 'Pass Navigo',          icon: '🚇' },
+  titre_sejour:   { label: 'Titre de séjour',      icon: '🛂' },
+  carte_identite: { label: "Pièce d'identité",     icon: '🪪' },
+  rib:            { label: 'RIB',                  icon: '🏦' },
+  certificat:     { label: 'Certificat médical',   icon: '⚕️' },
+  diplome:        { label: 'Diplôme',              icon: '🎓' },
+  formation:      { label: 'Attestation formation',icon: '📚' },
+  autre:          { label: 'Autre document',       icon: '📎' },
+};
 
 function fbListen() {
   if (!db) return;
@@ -1015,8 +1069,8 @@ function pagePlanning() {
           ${isPublished
             ? `<span class="chip good">✓ Publié ${new Date(pub.publishedAt).toLocaleDateString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>`
             : (weekShiftCount > 0
-              ? `<span class="chip draft">● BROUILLON — invisible pour les salariés</span>`
-              : `<span class="chip warn">Non publié</span>`)}
+              ? `<span class="chip draft">● BROUILLON — invisible des salariés</span>`
+              : `<span class="chip">Semaine vide</span>`)}
         </div>
       </div>
       <div class="page-actions">
@@ -1028,6 +1082,17 @@ function pagePlanning() {
         </div>
       </div>
     </div>
+
+    ${!isPublished && weekShiftCount > 0 ? `
+      <div class="info-banner draft-banner">
+        <span style="font-size:18px;">📝</span>
+        <div style="flex:1;">
+          <strong>Cette semaine est un brouillon</strong>
+          <div style="font-size:12px;margin-top:2px;opacity:.85;">Les salariés ne voient pas encore ce planning. Tu peux éditer librement. Quand c'est prêt, clique <strong>Publier le planning</strong> en bas à droite pour le rendre visible.</div>
+        </div>
+        <button class="btn-link" id="dismissDraftInfo">×</button>
+      </div>
+    ` : ''}
 
     ${weekFeries.length ? `
       <div class="ferie-banner">
@@ -1455,82 +1520,184 @@ function bindMonth() {
 }
 
 // ─────────── HOURS TRACKING ───────────
+// ─────────── HOURS TRACKING — VUE COMPTA ───────────
 function pageHours() {
+  const anchor = state.monthAnchor || new Date();
+  const year = anchor.getFullYear();
+  const month = anchor.getMonth();
   const actives = state.employees.filter(e => e.statut === 'Actif');
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const monthEnd = new Date(now.getFullYear(), now.getMonth()+1, 0);
+  const monthStart = new Date(year, month, 1);
+  const monthEnd = new Date(year, month+1, 0);
 
-  // Heures par employé pour le mois courant
-  const monthData = actives.map(emp => {
-    let planned = 0, real = 0, leaves = {};
-    for (let d = new Date(monthStart); d <= monthEnd; d = addDays(d, 1)) {
-      const wk = weekKey(d);
-      const dayIdx = (d.getDay() + 6) % 7;
-      const shifts = (state.shifts[`${emp.id}_${dayIdx}_${wk}`] || []).map(normShift);
-      shifts.forEach(s => {
-        if (s.leaveType) {
-          leaves[s.leaveType] = (leaves[s.leaveType] || 0) + 1;
-        } else {
-          planned += shiftHours(s);
-        }
-      });
-      const punches = state.punches[`${emp.id}_${dateISO(d)}`] || [];
-      punches.forEach(p => {
-        if (p.in && p.out) {
-          let dur = timeToMin(p.out) - timeToMin(p.in);
-          if (dur < 0) dur += 24*60;
-          real += dur / 60;
-        }
-      });
+  // Build detailed data for each employee
+  const data = actives.map(emp => {
+    const n = normEmp(emp);
+    let plannedTotal = 0, realTotal = 0;
+    let supplH25 = 0, supplH50 = 0, normalH = 0;
+    const leaves = { cp: 0, absent_justifie: 0, absent_injustifie: 0, arret_maladie: 0, rtt: 0, recup: 0 };
+    let workedDays = 0;
+    let ferieWorked = 0; // jours fériés travaillés
+
+    // Iterate week by week to compute heures sup correctly
+    const firstMonday = getMonday(monthStart);
+    for (let wkDate = new Date(firstMonday); wkDate <= monthEnd; wkDate = addDays(wkDate, 7)) {
+      const wk = weekKey(wkDate);
+      let wkPlanned = 0;
+      for (let d = 0; d < 7; d++) {
+        const dayDate = addDays(wkDate, d);
+        if (dayDate.getMonth() !== month) continue; // only count days in this month
+        const shifts = (state.shifts[`${emp.id}_${d}_${wk}`] || []).map(normShift);
+        const fer = holidayFor(dayDate);
+        shifts.forEach(s => {
+          if (s.leaveType) {
+            leaves[s.leaveType] = (leaves[s.leaveType] || 0) + 1;
+          } else {
+            const h = shiftHours(s);
+            wkPlanned += h;
+            plannedTotal += h;
+            if (h > 0) workedDays++;
+            if (fer && h > 0) ferieWorked++;
+          }
+        });
+        // Real hours from punches
+        const pks = state.punches[`${emp.id}_${dateISO(dayDate)}`] || [];
+        pks.forEach(p => {
+          if (p.in && p.out) {
+            let dur = timeToMin(p.out) - timeToMin(p.in);
+            if (dur < 0) dur += 24*60;
+            realTotal += dur / 60;
+          }
+        });
+      }
+      // Compute heures sup for this week based on contract
+      const contractH = n.heures || 35;
+      const wkNormal = Math.min(wkPlanned, contractH);
+      const wkSupp25 = Math.min(Math.max(wkPlanned - contractH, 0), 8);
+      const wkSupp50 = Math.max(wkPlanned - contractH - 8, 0);
+      normalH += wkNormal;
+      supplH25 += wkSupp25;
+      supplH50 += wkSupp50;
     }
-    const monthlyContract = (emp.heures || 35) * 4.33;
-    return { emp, planned, real, leaves, monthlyContract };
+
+    const taux = n.taux || 12;
+    const salaireNormal = normalH * taux;
+    const salaireS25 = supplH25 * taux * 1.25;
+    const salaireS50 = supplH50 * taux * 1.50;
+    const totalBrutPlanifie = salaireNormal + salaireS25 + salaireS50;
+    const navigoMensuel = n.navigoMensuel || 0;
+
+    return {
+      emp, n,
+      plannedTotal, realTotal,
+      normalH, supplH25, supplH50,
+      salaireNormal, salaireS25, salaireS50, totalBrutPlanifie,
+      leaves, workedDays, ferieWorked,
+      navigoMensuel,
+    };
   });
 
-  // Heures par semaine (8 dernières semaines)
+  // 8 last weeks for synthesis
   const weeks = [];
   for (let i = 7; i >= 0; i--) weeks.push(addDays(state.weekStart, -7 * i));
 
   return `
     <div class="page-head">
       <div>
-        <div class="uppercase-eyebrow">Suivi des heures</div>
-        <h1 class="h-1">Heures par salarié</h1>
+        <div class="uppercase-eyebrow">Suivi des heures · Paie</div>
+        <h1 class="h-1">Heures et préparation paie</h1>
       </div>
+      <div class="page-actions">
+        <div class="week-nav">
+          <button class="btn-icon" data-hnav="prev">←</button>
+          <span class="week-label" style="text-transform:capitalize;min-width:170px;">${MONTHS_FR[month]} ${year}</span>
+          <button class="btn-icon" data-hnav="next">→</button>
+          <button class="btn-sec" data-hnav="today">Mois en cours</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-bottom:14px;gap:8px;flex-wrap:wrap;">
+      <button class="btn-pri" id="exportPaieCsv" style="width:auto;padding:9px 16px;">↓ Export paie (CSV)</button>
+      <button class="btn-sec" id="exportPaieDetailled">↓ Export détaillé (CSV)</button>
     </div>
 
     <div class="panel">
       <div class="panel-head">
-        <h3>Mois en cours · ${MONTHS_FR[now.getMonth()]} ${now.getFullYear()}</h3>
+        <h3>Récap mensuel pour la paie</h3>
+        <span class="text-mute" style="font-size:11.5px;">HCR · sup +25% (36h→43h) · sup +50% (>43h)</span>
       </div>
-      <div class="panel-body nopad">
-        <table class="tbl">
+      <div class="panel-body nopad" style="overflow-x:auto;">
+        <table class="tbl tbl-compact">
           <thead>
             <tr>
               <th>Salarié</th>
               <th>Contrat</th>
-              <th>Heures planifiées</th>
-              <th>Heures réelles</th>
-              <th>Écart planning</th>
-              <th>Absences / Congés</th>
+              <th>Taux €/h</th>
+              <th>H. contrat<br>mensuel</th>
+              <th>H. normales</th>
+              <th>H. sup +25%</th>
+              <th>H. sup +50%</th>
+              <th>Total H</th>
+              <th>Brut estimé</th>
+              <th>Navigo</th>
+              <th>CP</th>
+              <th>AM</th>
+              <th>Abs.</th>
+              <th>J. fériés trav.</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
-            ${monthData.map(({emp, planned, real, leaves, monthlyContract}) => {
-              const gap = planned - monthlyContract;
-              const leaveSummary = Object.entries(leaves).map(([k,v]) => `${v} ${LEAVE_TYPES[k]?.short || k}`).join(' · ');
+            ${data.map(d => {
+              const contractMonthly = ((d.n.heures||35) * 52 / 12).toFixed(1);
+              const totalAbs = (d.leaves.absent_justifie||0) + (d.leaves.absent_injustifie||0);
               return `
                 <tr>
-                  <td><div class="emp-cell"><div class="av-emp sm">${initials(emp)}</div><div><div class="emp-cell-name">${esc(emp.prenom)} ${esc(emp.nom)}</div><div class="emp-cell-meta">${esc(emp.poste)}</div></div></div></td>
-                  <td class="mono">${emp.heures}h/sem (~${monthlyContract.toFixed(0)}h/mois)</td>
-                  <td class="mono tabular">${planned.toFixed(1)} h</td>
-                  <td class="mono tabular">${real > 0 ? real.toFixed(1)+' h' : '<span class="text-dim">—</span>'}</td>
-                  <td><span class="chip ${Math.abs(gap)<5?'':(gap>0?'warn':'alert')}">${gap>=0?'+':''}${gap.toFixed(1)} h</span></td>
-                  <td>${leaveSummary || '<span class="text-dim">—</span>'}</td>
+                  <td>
+                    <div class="emp-cell">
+                      <div class="av-emp sm">${initials(d.emp)}</div>
+                      <div>
+                        <div class="emp-cell-name">${esc(d.emp.prenom)} ${esc(d.emp.nom)}</div>
+                        <div class="emp-cell-meta">${esc(d.emp.poste||'')}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td><span class="chip">${esc(d.emp.contrat||'—')} ${d.n.heures||0}h</span></td>
+                  <td class="mono tabular">${d.n.taux ? d.n.taux.toFixed(2)+' €' : '—'}</td>
+                  <td class="mono tabular text-mute">${contractMonthly} h</td>
+                  <td class="mono tabular"><strong>${d.normalH.toFixed(1)} h</strong></td>
+                  <td class="mono tabular ${d.supplH25>0?'over':''}">${d.supplH25.toFixed(1)} h</td>
+                  <td class="mono tabular ${d.supplH50>0?'over':''}">${d.supplH50.toFixed(1)} h</td>
+                  <td class="mono tabular"><strong>${(d.normalH+d.supplH25+d.supplH50).toFixed(1)} h</strong></td>
+                  <td class="mono tabular"><strong>${d.totalBrutPlanifie.toFixed(2)} €</strong></td>
+                  <td class="mono tabular">${d.navigoMensuel ? d.navigoMensuel.toFixed(2)+' €' : '—'}</td>
+                  <td class="mono tabular">${d.leaves.cp || '—'}</td>
+                  <td class="mono tabular">${d.leaves.arret_maladie || '—'}</td>
+                  <td class="mono tabular">${totalAbs || '—'}</td>
+                  <td class="mono tabular">${d.ferieWorked || '—'}</td>
+                  <td><button class="btn-ghost" data-detail-emp="${d.emp.id}">Détail →</button></td>
                 </tr>
               `;
             }).join('')}
+            ${data.length > 0 ? `
+              <tr style="background:#f5f5f5;font-weight:600;">
+                <td>TOTAL ÉQUIPE</td>
+                <td>—</td>
+                <td>—</td>
+                <td class="mono tabular">${data.reduce((s,d) => s + (d.n.heures||35) * 52/12, 0).toFixed(1)} h</td>
+                <td class="mono tabular">${data.reduce((s,d) => s + d.normalH, 0).toFixed(1)} h</td>
+                <td class="mono tabular">${data.reduce((s,d) => s + d.supplH25, 0).toFixed(1)} h</td>
+                <td class="mono tabular">${data.reduce((s,d) => s + d.supplH50, 0).toFixed(1)} h</td>
+                <td class="mono tabular">${data.reduce((s,d) => s + d.normalH + d.supplH25 + d.supplH50, 0).toFixed(1)} h</td>
+                <td class="mono tabular">${data.reduce((s,d) => s + d.totalBrutPlanifie, 0).toFixed(2)} €</td>
+                <td class="mono tabular">${data.reduce((s,d) => s + (d.navigoMensuel||0), 0).toFixed(2)} €</td>
+                <td class="mono tabular">${data.reduce((s,d) => s + d.leaves.cp, 0) || '—'}</td>
+                <td class="mono tabular">${data.reduce((s,d) => s + d.leaves.arret_maladie, 0) || '—'}</td>
+                <td class="mono tabular">${data.reduce((s,d) => s + (d.leaves.absent_justifie||0) + (d.leaves.absent_injustifie||0), 0) || '—'}</td>
+                <td class="mono tabular">${data.reduce((s,d) => s + d.ferieWorked, 0) || '—'}</td>
+                <td></td>
+              </tr>
+            ` : ''}
           </tbody>
         </table>
       </div>
@@ -1578,10 +1745,139 @@ function pageHours() {
         </table>
       </div>
     </div>
+
+    <div class="row text-mute" style="margin-top:12px;font-size:11.5px;gap:14px;flex-wrap:wrap;">
+      <span><strong>Brut estimé</strong> = (H. normales × taux) + (H. sup 25% × taux × 1,25) + (H. sup 50% × taux × 1,50)</span>
+      <span><strong>Hors</strong> : primes, ancienneté, panier-repas, mutuelle, charges</span>
+    </div>
   `;
 }
 
-function bindHours() {}
+function bindHours() {
+  $$('[data-hnav]').forEach(b => b.addEventListener('click', e => {
+    const a = e.currentTarget.dataset.hnav;
+    if (!state.monthAnchor) state.monthAnchor = new Date();
+    if (a === 'prev') state.monthAnchor = new Date(state.monthAnchor.getFullYear(), state.monthAnchor.getMonth()-1, 1);
+    else if (a === 'next') state.monthAnchor = new Date(state.monthAnchor.getFullYear(), state.monthAnchor.getMonth()+1, 1);
+    else state.monthAnchor = new Date();
+    render();
+  }));
+  $$('[data-detail-emp]').forEach(b => b.addEventListener('click', e => {
+    state.empDetail = parseInt(e.currentTarget.dataset.detailEmp);
+    state.empTab = 'temps';
+    state.page = 'employees';
+    render();
+  }));
+  const exp1 = $('#exportPaieCsv');
+  if (exp1) exp1.addEventListener('click', () => exportPaieCSV(false));
+  const exp2 = $('#exportPaieDetailled');
+  if (exp2) exp2.addEventListener('click', () => exportPaieCSV(true));
+}
+
+function exportPaieCSV(detailed) {
+  const anchor = state.monthAnchor || new Date();
+  const year = anchor.getFullYear();
+  const month = anchor.getMonth();
+  const actives = state.employees.filter(e => e.statut === 'Actif');
+  const monthEnd = new Date(year, month+1, 0);
+  const firstMonday = getMonday(new Date(year, month, 1));
+
+  const lines = [];
+  if (detailed) {
+    lines.push('Salarié;Poste;Type contrat;H. contrat hebdo;H. contrat mensuel;Taux €/h;H. normales;H. sup +25%;H. sup +50%;Total H;Brut normales €;Brut sup 25% €;Brut sup 50% €;Total brut €;Navigo €;Jours CP;Jours AM;Absences justifiées;Absences injustifiées;RTT;Récup;Jours fériés travaillés');
+  } else {
+    lines.push('Salarié;Type contrat;H. contrat;Taux €/h;H. normales;H. sup +25%;H. sup +50%;Total H;Brut estimé €;Navigo €;CP;AM');
+  }
+
+  actives.forEach(emp => {
+    const n = normEmp(emp);
+    let plannedTotal = 0, normalH = 0, supplH25 = 0, supplH50 = 0;
+    const leaves = { cp: 0, absent_justifie: 0, absent_injustifie: 0, arret_maladie: 0, rtt: 0, recup: 0 };
+    let ferieWorked = 0;
+    for (let wkDate = new Date(firstMonday); wkDate <= monthEnd; wkDate = addDays(wkDate, 7)) {
+      const wk = weekKey(wkDate);
+      let wkPlanned = 0;
+      for (let d = 0; d < 7; d++) {
+        const dayDate = addDays(wkDate, d);
+        if (dayDate.getMonth() !== month) continue;
+        const shifts = (state.shifts[`${emp.id}_${d}_${wk}`] || []).map(normShift);
+        const fer = holidayFor(dayDate);
+        shifts.forEach(s => {
+          if (s.leaveType) leaves[s.leaveType] = (leaves[s.leaveType] || 0) + 1;
+          else {
+            const h = shiftHours(s);
+            wkPlanned += h; plannedTotal += h;
+            if (fer && h > 0) ferieWorked++;
+          }
+        });
+      }
+      const contractH = n.heures || 35;
+      normalH += Math.min(wkPlanned, contractH);
+      supplH25 += Math.min(Math.max(wkPlanned - contractH, 0), 8);
+      supplH50 += Math.max(wkPlanned - contractH - 8, 0);
+    }
+    const taux = n.taux || 12;
+    const contractMonthly = (n.heures||35) * 52 / 12;
+    const brutN = normalH * taux;
+    const brutS25 = supplH25 * taux * 1.25;
+    const brutS50 = supplH50 * taux * 1.50;
+    const total = brutN + brutS25 + brutS50;
+    const fr = v => String(v.toFixed(2)).replace('.', ',');
+    const fr1 = v => String(v.toFixed(1)).replace('.', ',');
+
+    if (detailed) {
+      lines.push([
+        csvEsc(`${emp.prenom} ${emp.nom}`),
+        csvEsc(emp.poste||''),
+        csvEsc(emp.contrat||''),
+        n.heures||35,
+        fr1(contractMonthly),
+        fr(taux),
+        fr1(normalH),
+        fr1(supplH25),
+        fr1(supplH50),
+        fr1(normalH+supplH25+supplH50),
+        fr(brutN),
+        fr(brutS25),
+        fr(brutS50),
+        fr(total),
+        fr(n.navigoMensuel||0),
+        leaves.cp,
+        leaves.arret_maladie,
+        leaves.absent_justifie,
+        leaves.absent_injustifie,
+        leaves.rtt,
+        leaves.recup,
+        ferieWorked,
+      ].join(';'));
+    } else {
+      lines.push([
+        csvEsc(`${emp.prenom} ${emp.nom}`),
+        csvEsc(emp.contrat||''),
+        `${n.heures||35}h`,
+        fr(taux),
+        fr1(normalH),
+        fr1(supplH25),
+        fr1(supplH50),
+        fr1(normalH+supplH25+supplH50),
+        fr(total),
+        fr(n.navigoMensuel||0),
+        leaves.cp,
+        leaves.arret_maladie,
+      ].join(';'));
+    }
+  });
+
+  const csv = lines.join('\r\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `paie_${MONTHS_FR[month]}_${year}${detailed?'_detail':''}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast('CSV téléchargé', 'good');
+}
 
 // ─────────── POINTAGES ───────────
 function pagePointages() {
@@ -1842,6 +2138,7 @@ function bindEmployeeDetail() {
   if (tab === 'contrats') bindEmpTabContrats();
   if (tab === 'temps') bindEmpTabTemps();
   if (tab === 'conges') bindEmpTabConges();
+  if (tab === 'docs') bindEmpTabDocs();
   if (tab === 'role') bindEmpTabRole();
 }
 
@@ -1976,6 +2273,7 @@ function empTabContrats(n) {
         ${kvRow('Taux horaire', n.taux ? `${n.taux} €/h` : 'Non renseigné')}
         ${kvRow('Durée de travail hebdomadaire', `${n.heures || 0}h`)}
         ${kvRow('Nb. de jours travaillés par semaine', `${n.joursTravailles || 5} jours`)}
+        ${kvRow('Remboursement Navigo / mois', n.navigoMensuel ? `${n.navigoMensuel} €` : 'Non renseigné')}
       </div>
     </div>
 
@@ -2046,6 +2344,7 @@ function openContratEditor() {
       <div class="field"><label class="field-label">Jours travaillés / semaine</label><input class="input mono" id="cJours" type="number" min="1" max="7" value="${n.joursTravailles||5}"></div>
       <div class="field"><label class="field-label">Taux horaire (€)</label><input class="input mono" id="cTaux" type="number" step="0.01" value="${n.taux||12}"></div>
       <div class="field full"><label class="field-label">Rémunération mensuelle brute (€)</label><input class="input mono" id="cRem" type="number" step="0.01" value="${n.remuneration||0}"></div>
+      <div class="field full"><label class="field-label">Remboursement Navigo / transport mensuel (€)</label><input class="input mono" id="cNavigo" type="number" step="0.01" value="${n.navigoMensuel||0}" placeholder="ex: 42,15"></div>
     </div>
   `;
   const footer = `
@@ -2066,6 +2365,7 @@ function openContratEditor() {
       joursTravailles: parseInt($('#cJours').value) || 5,
       taux: parseFloat($('#cTaux').value) || 12,
       remuneration: parseFloat($('#cRem').value) || 0,
+      navigoMensuel: parseFloat($('#cNavigo').value) || 0,
     };
     state.employees = state.employees.map(x => x.id === e.id ? updated : x);
     fbSave('employees', state.employees);
@@ -2293,30 +2593,220 @@ function openCpEditor() {
 
 // ── DOCS TAB ──
 function empTabDocs(n) {
+  const docs = n.documents || [];
+  // Group by category
+  const byCat = {};
+  docs.forEach(d => {
+    const c = d.category || 'autre';
+    if (!byCat[c]) byCat[c] = [];
+    byCat[c].push(d);
+  });
+
+  const totalSize = docs.reduce((s,d) => s + (d.size||0), 0);
+
   return `
-    <div class="panel">
-      <div class="panel-body" style="text-align:center;padding:32px 18px;">
-        <div style="font-size:36px;margin-bottom:8px;">📁</div>
-        <div style="font-weight:500;margin-bottom:4px;">Stockage de documents</div>
-        <div class="text-mute" style="font-size:13px;max-width:420px;margin:6px auto 16px;">
-          Cette section permettra de stocker les contrats, fiches de paie, titres de séjour, et autres documents du salarié.
-        </div>
-        <span class="chip" style="font-size:11px;">Disponible en V2 partie 4 (Firebase Storage)</span>
+    <div class="row" style="gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
+      <div class="row" style="gap:8px;flex:1;">
+        <span class="chip">${docs.length} document${docs.length>1?'s':''}</span>
+        <span class="chip">${formatBytes(totalSize)}</span>
       </div>
+      ${docs.length > 0 ? `<button class="btn-sec" id="downloadAllDocs">↓ Tout télécharger</button>` : ''}
+      <button class="btn-pri" id="uploadDoc" style="width:auto;padding:9px 16px;">+ Ajouter un document</button>
     </div>
 
-    <div class="panel" style="margin-top:14px;">
-      <div class="panel-head"><h3>Titre de séjour</h3></div>
-      <div class="panel-body">
-        ${n.travailleurEtranger ? `
-          ${kvRow('Type de document', n.titreSejourType || 'Non renseigné')}
-          ${kvRow('Numéro de document', n.titreSejourNumero || 'Non renseigné')}
-          ${kvRow('Début de validité', n.titreSejourDebut ? fmtDateShort(n.titreSejourDebut) : 'Non renseigné')}
-          ${kvRow('Fin de validité', n.titreSejourFin ? fmtDateShort(n.titreSejourFin) : 'Non renseigné')}
-        ` : '<div class="text-mute" style="text-align:center;padding:18px 0;font-size:13px;">Le salarié n\'est pas marqué comme travailleur étranger</div>'}
+    ${docs.length === 0 ? `
+      <div class="panel" style="background:#fafafa;border-style:dashed;">
+        <div class="panel-body" style="text-align:center;padding:32px 18px;">
+          <div style="font-size:36px;margin-bottom:8px;">📁</div>
+          <div style="font-weight:500;margin-bottom:4px;">Aucun document pour le moment</div>
+          <div class="text-mute" style="font-size:13px;max-width:420px;margin:6px auto 0;">
+            Téléverse contrat, avenants, navigo, arrêts maladie, fiches de paie, titre de séjour, RIB...
+          </div>
+        </div>
+      </div>
+    ` : `
+      <div class="docs-grid">
+        ${Object.entries(byCat).sort(([a],[b]) => a.localeCompare(b)).map(([cat, items]) => {
+          const c = DOC_CATEGORIES[cat] || DOC_CATEGORIES.autre;
+          return `
+            <div class="panel doc-cat-panel">
+              <div class="panel-head">
+                <h3>${c.icon} ${esc(c.label)} <span class="text-mute" style="font-size:12px;font-weight:400;">(${items.length})</span></h3>
+              </div>
+              <div class="panel-body" style="padding:0;">
+                ${items.sort((a,b) => (b.uploadedAt||'').localeCompare(a.uploadedAt||'')).map(d => `
+                  <div class="doc-item">
+                    <div class="doc-icon">${docFileIcon(d.type, d.name)}</div>
+                    <div class="doc-info">
+                      <div class="doc-name">${esc(d.name)}</div>
+                      <div class="doc-meta">${formatBytes(d.size||0)} · ${new Date(d.uploadedAt).toLocaleDateString('fr-FR')}</div>
+                    </div>
+                    <div class="doc-actions">
+                      <a class="btn-ghost" href="${esc(d.url)}" target="_blank" rel="noopener" title="Ouvrir">↗</a>
+                      <a class="btn-ghost" href="${esc(d.url)}" download="${esc(d.name)}" title="Télécharger">↓</a>
+                      <button class="btn-ghost" data-del-doc="${esc(d.id)}" title="Supprimer">✕</button>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `}
+
+    ${n.travailleurEtranger ? `
+      <div class="panel" style="margin-top:14px;">
+        <div class="panel-head"><h3>🛂 Titre de séjour — détails</h3></div>
+        <div class="panel-body">
+          ${kvRow('Type', n.titreSejourType || 'Non renseigné')}
+          ${kvRow('Numéro', n.titreSejourNumero || 'Non renseigné')}
+          ${kvRow('Début validité', n.titreSejourDebut ? fmtDateShort(n.titreSejourDebut) : 'Non renseigné')}
+          ${kvRow('Fin validité', n.titreSejourFin ? fmtDateShort(n.titreSejourFin) : 'Non renseigné')}
+        </div>
+      </div>
+    ` : ''}
+  `;
+}
+
+function docFileIcon(type, name) {
+  const ext = (name||'').split('.').pop().toLowerCase();
+  if (type && type.startsWith('image/')) return '🖼️';
+  if (ext === 'pdf' || (type && type.includes('pdf'))) return '📕';
+  if (['doc','docx'].includes(ext)) return '📘';
+  if (['xls','xlsx','csv'].includes(ext)) return '📗';
+  return '📄';
+}
+
+function bindEmpTabDocs() {
+  $('#uploadDoc').addEventListener('click', () => openDocUploader());
+  const dlAll = $('#downloadAllDocs');
+  if (dlAll) dlAll.addEventListener('click', () => downloadAllEmpDocs());
+  $$('[data-del-doc]').forEach(b => b.addEventListener('click', ev => {
+    const docId = ev.currentTarget.dataset.delDoc;
+    deleteEmpDoc(docId);
+  }));
+}
+
+function openDocUploader() {
+  const empId = state.empDetail;
+  const e = state.employees.find(x => x.id === empId);
+  const body = `
+    <div class="form-grid">
+      <div class="field full"><label class="field-label">Catégorie</label>
+        <select class="input" id="dCat">
+          ${Object.entries(DOC_CATEGORIES).map(([k,v]) => `<option value="${k}">${v.icon} ${esc(v.label)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field full">
+        <label class="field-label">Fichier(s)</label>
+        <label class="file-drop" id="fileDrop">
+          <input type="file" id="dFile" multiple accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx" style="display:none;">
+          <div class="file-drop-content">
+            <div style="font-size:32px;">📤</div>
+            <div style="font-weight:500;margin-top:8px;">Cliquer pour choisir ou déposer</div>
+            <div class="text-mute" style="font-size:12px;margin-top:4px;">PDF, images, Word, Excel — jusqu'à 25 Mo</div>
+          </div>
+        </label>
+        <div id="fileList" style="margin-top:10px;"></div>
       </div>
     </div>
+    <div id="uploadProgress" style="display:none;margin-top:12px;">
+      <div class="progress-bar"><div class="progress-fill" id="progFill"></div></div>
+      <div class="text-mute" style="font-size:11.5px;margin-top:6px;" id="progLabel">Upload en cours...</div>
+    </div>
   `;
+  const footer = `<div class="spacer"></div><button class="btn-sec" data-close>Annuler</button><button class="btn-pri" id="dUpload" style="width:auto;padding:10px 18px;" disabled>Téléverser</button>`;
+  const { close } = openModal({ title: `Ajouter un document — ${e.prenom} ${e.nom}`, body, footer });
+
+  let selectedFiles = [];
+
+  const renderFileList = () => {
+    const fl = $('#fileList');
+    if (!selectedFiles.length) { fl.innerHTML = ''; return; }
+    fl.innerHTML = selectedFiles.map((f,i) => `
+      <div class="row" style="gap:8px;padding:6px 10px;background:#fafafa;border-radius:6px;margin-bottom:4px;font-size:12.5px;">
+        <span style="flex:1;">${esc(f.name)}</span>
+        <span class="text-mute mono">${formatBytes(f.size)}</span>
+        <button class="btn-ghost" data-rm="${i}" style="padding:0 6px;">✕</button>
+      </div>
+    `).join('');
+    $$('[data-rm]', fl).forEach(b => b.addEventListener('click', ev => {
+      selectedFiles.splice(parseInt(ev.target.dataset.rm), 1);
+      renderFileList();
+      $('#dUpload').disabled = !selectedFiles.length;
+    }));
+  };
+
+  $('#dFile').addEventListener('change', ev => {
+    selectedFiles = [...ev.target.files];
+    renderFileList();
+    $('#dUpload').disabled = !selectedFiles.length;
+  });
+
+  // Drag & drop
+  const drop = $('#fileDrop');
+  ['dragover','dragenter'].forEach(evt => drop.addEventListener(evt, ev => { ev.preventDefault(); drop.classList.add('drag'); }));
+  ['dragleave','dragend','drop'].forEach(evt => drop.addEventListener(evt, ev => { ev.preventDefault(); drop.classList.remove('drag'); }));
+  drop.addEventListener('drop', ev => {
+    selectedFiles = [...ev.dataTransfer.files];
+    renderFileList();
+    $('#dUpload').disabled = !selectedFiles.length;
+  });
+
+  $('#dUpload').addEventListener('click', async () => {
+    if (!selectedFiles.length) return;
+    const cat = $('#dCat').value;
+    $('#dUpload').disabled = true;
+    $('#uploadProgress').style.display = '';
+    const e2 = state.employees.find(x => x.id === empId);
+    const newDocs = [...(e2.documents || [])];
+    let done = 0;
+    for (const file of selectedFiles) {
+      $('#progLabel').textContent = `Upload ${done+1}/${selectedFiles.length} : ${file.name}`;
+      $('#progFill').style.width = `${(done/selectedFiles.length)*100}%`;
+      const meta = await uploadEmployeeDoc(empId, file, cat);
+      if (meta) newDocs.push(meta);
+      done++;
+    }
+    $('#progFill').style.width = '100%';
+    $('#progLabel').textContent = 'Terminé !';
+    const updated = { ...e2, documents: newDocs };
+    state.employees = state.employees.map(x => x.id === empId ? updated : x);
+    fbSave('employees', state.employees);
+    toast(`${done} document${done>1?'s':''} ajouté${done>1?'s':''}`, 'good');
+    setTimeout(close, 600);
+    render();
+  });
+}
+
+async function deleteEmpDoc(docId) {
+  const e = state.employees.find(x => x.id === state.empDetail);
+  const doc = (e.documents||[]).find(d => d.id === docId);
+  if (!doc) return;
+  if (!confirm(`Supprimer "${doc.name}" ? Cette action est irréversible.`)) return;
+  await deleteEmployeeDoc(doc.path);
+  const updated = { ...e, documents: (e.documents||[]).filter(d => d.id !== docId) };
+  state.employees = state.employees.map(x => x.id === e.id ? updated : x);
+  fbSave('employees', state.employees);
+  toast('Document supprimé', '');
+  render();
+}
+
+async function downloadAllEmpDocs() {
+  const e = state.employees.find(x => x.id === state.empDetail);
+  const docs = e.documents || [];
+  if (!docs.length) return;
+  toast(`Téléchargement de ${docs.length} document${docs.length>1?'s':''}...`, '');
+  for (const d of docs) {
+    try {
+      const a = document.createElement('a');
+      a.href = d.url; a.download = d.name; a.target = '_blank';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      await new Promise(r => setTimeout(r, 250)); // stagger to avoid browser blocking
+    } catch (err) { console.warn(err); }
+  }
+  toast('Téléchargements lancés', 'good');
 }
 
 // ── ROLE TAB ──
