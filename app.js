@@ -294,6 +294,7 @@ const state = {
   empTab: 'info',    // active tab in employee detail
   rhTab: 'entries',  // active tab in Suivi RH page
   reqTab: 'pending', // active tab in absence requests
+  hoursView: 'cards', // 'cards' | 'table'
 };
 
 // ─────────── EMPLOYEE NORMALIZATION ───────────
@@ -1334,16 +1335,17 @@ function viewAdminShell() {
 
   // Top-level sections — like Combo
   const TOP_SECTIONS = [
-    { key: 'dashboard', label: 'Aperçu',   pages: ['dashboard'] },
-    { key: 'planning',  label: 'Planning', pages: ['planning', 'month'] },
-    { key: 'team',      label: 'Équipe',   pages: ['employees'] },
-    { key: 'hours',     label: 'Heures',   pages: ['hours', 'pointages'] },
-    { key: 'rh',        label: 'RH',       pages: ['requests', 'cp', 'rh', 'rappels', 'emargements', 'etablissement', 'alerts'] },
+    { key: 'dashboard',    label: 'Aperçu',      pages: ['dashboard'],           badge: 0 },
+    { key: 'planning',     label: 'Planning',    pages: ['planning', 'month'],   badge: 0 },
+    { key: 'team',         label: 'Équipe',      pages: ['employees'],           badge: 0 },
+    { key: 'hours',        label: 'Heures',      pages: ['hours', 'pointages'],  badge: 0 },
+    { key: 'rappels',      label: 'Rappels',     pages: ['rappels'],             badge: rappelsCount },
+    { key: 'emargements',  label: 'Émargements', pages: ['emargements'],         badge: unsignedCount },
+    { key: 'rh',           label: 'RH',          pages: ['requests', 'cp', 'rh', 'etablissement', 'alerts'], badge: pendingReqs },
   ];
 
   const currentSection = TOP_SECTIONS.find(s => s.pages.includes(state.page)) || TOP_SECTIONS[0];
   const showSubNav = currentSection.key === 'rh';
-  const totalRhBadge = pendingReqs + rappelsCount;
 
   return `
     <div class="shell">
@@ -1357,7 +1359,7 @@ function viewAdminShell() {
             ${TOP_SECTIONS.map(s => {
               const active = s.key === currentSection.key;
               const firstPage = s.pages[0];
-              return `<button class="topnav-link ${active?'active':''}" data-page="${firstPage}">${esc(s.label)}${s.key==='rh' && totalRhBadge > 0 ? `<span class="dot-badge">${totalRhBadge}</span>` : ''}</button>`;
+              return `<button class="topnav-link ${active?'active':''}" data-page="${firstPage}">${esc(s.label)}${s.badge > 0 ? `<span class="dot-badge">${s.badge}</span>` : ''}</button>`;
             }).join('')}
           </nav>
           <div class="topnav-right">
@@ -1390,10 +1392,15 @@ function viewAdminShell() {
               <option value="hours" ${state.page==='hours'?'selected':''}>Préparation paie</option>
               <option value="pointages" ${state.page==='pointages'?'selected':''}>Pointages</option>
             </optgroup>
+            <optgroup label="Conformité">
+              <option value="rappels" ${state.page==='rappels'?'selected':''}>Rappels${rappelsCount?` (${rappelsCount})`:''}</option>
+              <option value="emargements" ${state.page==='emargements'?'selected':''}>Émargements${unsignedCount?` (${unsignedCount})`:''}</option>
+              <option value="etablissement" ${state.page==='etablissement'?'selected':''}>Établissement</option>
+            </optgroup>
             <optgroup label="RH">
               <option value="requests" ${state.page==='requests'?'selected':''}>Demandes d'absence${pendingReqs?` (${pendingReqs})`:''}</option>
               <option value="cp" ${state.page==='cp'?'selected':''}>Compteurs CP</option>
-              <option value="rh" ${state.page==='rh'?'selected':''}>Suivi RH</option>
+              <option value="rh" ${state.page==='rh'?'selected':''}>Suivi salariés</option>
               <option value="alerts" ${state.page==='alerts'?'selected':''}>Alertes${anomalies.length?` (${anomalies.length})`:''}</option>
             </optgroup>
           </select>
@@ -1411,14 +1418,6 @@ function viewAdminShell() {
             <button class="subnav-item ${state.page==='cp'?'active':''}" data-page="cp">Compteurs CP</button>
             <button class="subnav-item ${state.page==='rh'?'active':''}" data-page="rh">Suivi salariés</button>
             <div class="subnav-section" style="margin-top:18px;">Conformité</div>
-            <button class="subnav-item ${state.page==='rappels'?'active':''}" data-page="rappels">
-              Rappels et échéances
-              ${rappelsCount > 0 ? `<span class="subnav-badge ${rappelsCount > 3 ? 'alert' : ''}">${rappelsCount}</span>` : ''}
-            </button>
-            <button class="subnav-item ${state.page==='emargements'?'active':''}" data-page="emargements">
-              Émargements
-              ${unsignedCount > 0 ? `<span class="subnav-badge">${unsignedCount}</span>` : ''}
-            </button>
             <button class="subnav-item ${state.page==='etablissement'?'active':''}" data-page="etablissement">
               Établissement
             </button>
@@ -2323,101 +2322,226 @@ function pageHours() {
       </div>
     </div>
 
-    <div class="row" style="margin-bottom:16px;gap:8px;flex-wrap:wrap;">
+    <div class="row" style="margin-bottom:18px;gap:8px;flex-wrap:wrap;">
       <button class="btn-pri" id="exportPaieCsv" style="width:auto;">↓ Export paie</button>
       <button class="btn-sec" id="exportPaieDetailled">↓ Export détaillé</button>
+      <div class="spacer"></div>
+      <button class="btn-ghost" id="toggleHoursView" data-view="${state.hoursView || 'cards'}">
+        ${(state.hoursView || 'cards') === 'cards' ? '☰ Vue tableau' : '▭ Vue cartes'}
+      </button>
     </div>
 
-    <div class="panel">
-      <div class="panel-head">
-        <h3>Récap par salarié</h3>
-        <span class="text-mute" style="font-size:11.5px;">HCR · sup +25% (36→43h) · sup +50% (>43h)</span>
+    ${(state.hoursView || 'cards') === 'cards' ? `
+      <div class="paie-cards">
+        ${data.map(d => {
+          const contractMonthly = ((d.n.heures||35) * 52 / 12).toFixed(1);
+          const totalAbs = (d.leaves.absent_justifie||0) + (d.leaves.absent_injustifie||0);
+          const totalH = d.normalH + d.supplH25 + d.supplH50;
+          const totalBrut = d.totalBrutPlanifie + (d.pourboires||0) + d.valeurRepas + d.navigoMensuel;
+          return `
+            <article class="paie-card">
+              <header class="paie-card-head">
+                <div class="with-av">
+                  <div class="av-emp">${initials(d.emp)}</div>
+                  <div class="stack">
+                    <div class="paie-card-name">${esc(d.emp.prenom)} ${esc(d.emp.nom)}</div>
+                    <div class="paie-card-sub">${esc(d.emp.poste||'—')} · ${esc(d.emp.contrat||'—')} ${d.n.heures||0}h · ${d.n.taux ? d.n.taux.toFixed(2) : '—'} €/h</div>
+                  </div>
+                </div>
+                <button class="btn-ghost" data-detail-emp="${d.emp.id}" title="Voir la fiche">Fiche →</button>
+              </header>
+
+              <div class="paie-stats">
+                <div class="paie-stat">
+                  <div class="paie-stat-label">Heures normales</div>
+                  <div class="paie-stat-value">${d.normalH.toFixed(1)}<span class="paie-stat-unit">h</span></div>
+                  <div class="paie-stat-meta">contrat ${contractMonthly} h</div>
+                </div>
+                <div class="paie-stat ${d.supplH25 > 0 ? 'highlight-warn' : ''}">
+                  <div class="paie-stat-label">Sup. +25%</div>
+                  <div class="paie-stat-value">${d.supplH25.toFixed(1)}<span class="paie-stat-unit">h</span></div>
+                  <div class="paie-stat-meta">36→43h/sem</div>
+                </div>
+                <div class="paie-stat ${d.supplH50 > 0 ? 'highlight-alert' : ''}">
+                  <div class="paie-stat-label">Sup. +50%</div>
+                  <div class="paie-stat-value">${d.supplH50.toFixed(1)}<span class="paie-stat-unit">h</span></div>
+                  <div class="paie-stat-meta">au-delà 43h/sem</div>
+                </div>
+                <div class="paie-stat highlight">
+                  <div class="paie-stat-label">Total heures</div>
+                  <div class="paie-stat-value">${totalH.toFixed(1)}<span class="paie-stat-unit">h</span></div>
+                  <div class="paie-stat-meta">${d.workedDays} jours travaillés</div>
+                </div>
+                <div class="paie-stat highlight-money">
+                  <div class="paie-stat-label">Brut estimé</div>
+                  <div class="paie-stat-value">${d.totalBrutPlanifie.toFixed(0)}<span class="paie-stat-unit">€</span></div>
+                  <div class="paie-stat-meta">${d.totalBrutPlanifie.toFixed(2)} €</div>
+                </div>
+                <div class="paie-stat">
+                  <div class="paie-stat-label">Avantage repas</div>
+                  <div class="paie-stat-value">${d.repas}<span class="paie-stat-unit">×</span></div>
+                  <div class="paie-stat-meta">${d.valeurRepas.toFixed(2)} € · ${REPAS_HCR_VALEUR}€/repas</div>
+                </div>
+              </div>
+
+              <div class="paie-secondary">
+                <div class="paie-pill ${d.coupures > 0 ? 'warn' : ''}" title="Temps de coupure entre 2 services (non payé)">
+                  <span class="paie-pill-label">Coupures</span>
+                  <span class="paie-pill-value">${d.coupures > 0 ? d.coupures.toFixed(1)+'h' : '0h'}</span>
+                </div>
+                <div class="paie-pill" title="Pass Navigo mensuel">
+                  <span class="paie-pill-label">Navigo</span>
+                  <span class="paie-pill-value">${d.navigoMensuel ? d.navigoMensuel.toFixed(2)+'€' : '—'}</span>
+                </div>
+                <div class="paie-pill" title="Congés payés ce mois">
+                  <span class="paie-pill-label">CP</span>
+                  <span class="paie-pill-value">${d.leaves.cp || '0'} j</span>
+                </div>
+                <div class="paie-pill ${d.leaves.arret_maladie > 0 ? 'warn' : ''}" title="Arrêts maladie">
+                  <span class="paie-pill-label">Arrêt mal.</span>
+                  <span class="paie-pill-value">${d.leaves.arret_maladie || '0'} j</span>
+                </div>
+                <div class="paie-pill ${totalAbs > 0 ? 'alert' : ''}" title="Absences justifiées + injustifiées">
+                  <span class="paie-pill-label">Absences</span>
+                  <span class="paie-pill-value">${totalAbs || '0'} j</span>
+                </div>
+                <div class="paie-pill ${d.ferieWorked > 0 ? 'accent' : ''}" title="Jours fériés travaillés">
+                  <span class="paie-pill-label">Fériés trav.</span>
+                  <span class="paie-pill-value">${d.ferieWorked || '0'} j</span>
+                </div>
+                <div class="paie-pill paie-pill-input" title="Pourboires (manuel)">
+                  <span class="paie-pill-label">Pourboires</span>
+                  <input type="number" data-tip="${d.emp.id}" value="${d.pourboires||''}" placeholder="0.00" step="0.01">
+                  <span class="paie-pill-unit">€</span>
+                </div>
+              </div>
+            </article>
+          `;
+        }).join('')}
+
+        ${data.length > 0 ? `
+          <article class="paie-card paie-total-card">
+            <header class="paie-card-head">
+              <div class="stack">
+                <div class="paie-card-name" style="font-style:italic;">Total équipe</div>
+                <div class="paie-card-sub">${data.length} salariés · ${MONTHS_FR[month]} ${year}</div>
+              </div>
+            </header>
+            <div class="paie-stats">
+              <div class="paie-stat">
+                <div class="paie-stat-label">Heures totales</div>
+                <div class="paie-stat-value">${teamTotalH.toFixed(0)}<span class="paie-stat-unit">h</span></div>
+              </div>
+              <div class="paie-stat highlight-warn">
+                <div class="paie-stat-label">Heures sup.</div>
+                <div class="paie-stat-value">${teamSuppH.toFixed(1)}<span class="paie-stat-unit">h</span></div>
+              </div>
+              <div class="paie-stat highlight-money">
+                <div class="paie-stat-label">Masse brute</div>
+                <div class="paie-stat-value">${Math.round(teamTotalBrut).toLocaleString('fr-FR')}<span class="paie-stat-unit">€</span></div>
+              </div>
+              <div class="paie-stat">
+                <div class="paie-stat-label">Repas</div>
+                <div class="paie-stat-value">${data.reduce((s,d) => s + d.valeurRepas, 0).toFixed(0)}<span class="paie-stat-unit">€</span></div>
+              </div>
+              <div class="paie-stat">
+                <div class="paie-stat-label">Pourboires</div>
+                <div class="paie-stat-value">${data.reduce((s,d) => s + (d.pourboires||0), 0).toFixed(0)}<span class="paie-stat-unit">€</span></div>
+              </div>
+              <div class="paie-stat">
+                <div class="paie-stat-label">Navigo</div>
+                <div class="paie-stat-value">${data.reduce((s,d) => s + (d.navigoMensuel||0), 0).toFixed(0)}<span class="paie-stat-unit">€</span></div>
+              </div>
+            </div>
+          </article>
+        ` : ''}
       </div>
-      <div class="panel-body nopad" style="overflow-x:auto;">
-        <table class="tbl tbl-compact">
-          <thead>
-            <tr>
-              <th>Salarié</th>
-              <th>Contrat</th>
-              <th>Taux €/h</th>
-              <th>H. contrat<br>mensuel</th>
-              <th>H. normales</th>
-              <th>H. sup +25%</th>
-              <th>H. sup +50%</th>
-              <th>Total H</th>
-              <th>Brut estimé</th>
-              <th>Repas<br>(${REPAS_HCR_VALEUR}€)</th>
-              <th>Coupures</th>
-              <th>Pourboires</th>
-              <th>Navigo</th>
-              <th>CP</th>
-              <th>AM</th>
-              <th>Abs.</th>
-              <th>J. fériés trav.</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            ${data.map(d => {
-              const contractMonthly = ((d.n.heures||35) * 52 / 12).toFixed(1);
-              const totalAbs = (d.leaves.absent_justifie||0) + (d.leaves.absent_injustifie||0);
-              return `
-                <tr>
-                  <td>
-                    <div class="with-av">
-                      <div class="av-emp sm">${initials(d.emp)}</div>
-                      <div class="stack">
-                        <div style="font-weight:600;">${esc(d.emp.prenom)} ${esc(d.emp.nom)}</div>
-                        <div class="sub" style="text-decoration:none;cursor:default;">${esc(d.emp.poste||'—')}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td><span class="chip">${esc(d.emp.contrat||'—')} · ${d.n.heures||0}h</span></td>
-                  <td class="mono tabular">${d.n.taux ? d.n.taux.toFixed(2)+' €' : '—'}</td>
-                  <td class="mono tabular text-mute">${contractMonthly} h</td>
-                  <td class="mono tabular"><strong>${d.normalH.toFixed(1)} h</strong></td>
-                  <td class="mono tabular ${d.supplH25>0?'over':''}">${d.supplH25.toFixed(1)} h</td>
-                  <td class="mono tabular ${d.supplH50>0?'over':''}">${d.supplH50.toFixed(1)} h</td>
-                  <td class="mono tabular"><strong>${(d.normalH+d.supplH25+d.supplH50).toFixed(1)} h</strong></td>
-                  <td class="mono tabular"><strong>${d.totalBrutPlanifie.toFixed(2)} €</strong></td>
-                  <td class="mono tabular" title="${d.repas} repas × ${REPAS_HCR_VALEUR}€">${d.repas} · ${d.valeurRepas.toFixed(2)} €</td>
-                  <td class="mono tabular ${d.coupures > 0 ? 'over' : ''}">${d.coupures > 0 ? d.coupures.toFixed(1)+' h' : '—'}</td>
-                  <td class="mono tabular"><input type="number" class="input mini-input" data-tip="${d.emp.id}" value="${d.pourboires||''}" placeholder="0" step="0.01" style="width:70px;padding:4px 6px;font-size:11.5px;text-align:right;"></td>
-                  <td class="mono tabular">${d.navigoMensuel ? d.navigoMensuel.toFixed(2)+' €' : '—'}</td>
-                  <td class="mono tabular">${d.leaves.cp || '—'}</td>
-                  <td class="mono tabular">${d.leaves.arret_maladie || '—'}</td>
-                  <td class="mono tabular">${totalAbs || '—'}</td>
-                  <td class="mono tabular">${d.ferieWorked || '—'}</td>
-                  <td><button class="btn-ghost" data-detail-emp="${d.emp.id}">→</button></td>
-                </tr>
-              `;
-            }).join('')}
-            ${data.length > 0 ? `
-              <tr class="row-total">
-                <td><strong style="font-family:var(--f-display);font-size:15px;letter-spacing:-0.01em;">Total équipe</strong></td>
-                <td>—</td>
-                <td>—</td>
-                <td class="mono tabular">${data.reduce((s,d) => s + (d.n.heures||35) * 52/12, 0).toFixed(1)} h</td>
-                <td class="mono tabular">${data.reduce((s,d) => s + d.normalH, 0).toFixed(1)} h</td>
-                <td class="mono tabular">${data.reduce((s,d) => s + d.supplH25, 0).toFixed(1)} h</td>
-                <td class="mono tabular">${data.reduce((s,d) => s + d.supplH50, 0).toFixed(1)} h</td>
-                <td class="mono tabular"><strong>${teamTotalH.toFixed(1)} h</strong></td>
-                <td class="mono tabular"><strong>${teamTotalBrut.toFixed(2)} €</strong></td>
-                <td class="mono tabular"><strong>${data.reduce((s,d) => s + d.valeurRepas, 0).toFixed(2)} €</strong></td>
-                <td class="mono tabular">${data.reduce((s,d) => s + d.coupures, 0).toFixed(1)} h</td>
-                <td class="mono tabular"><strong>${data.reduce((s,d) => s + (d.pourboires||0), 0).toFixed(2)} €</strong></td>
-                <td class="mono tabular">${data.reduce((s,d) => s + (d.navigoMensuel||0), 0).toFixed(2)} €</td>
-                <td class="mono tabular">${data.reduce((s,d) => s + d.leaves.cp, 0) || '—'}</td>
-                <td class="mono tabular">${data.reduce((s,d) => s + d.leaves.arret_maladie, 0) || '—'}</td>
-                <td class="mono tabular">${data.reduce((s,d) => s + (d.leaves.absent_justifie||0) + (d.leaves.absent_injustifie||0), 0) || '—'}</td>
-                <td class="mono tabular">${data.reduce((s,d) => s + d.ferieWorked, 0) || '—'}</td>
-                <td></td>
+    ` : `
+      <!-- Vue tableau comptable, pour export visuel -->
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Vue comptable détaillée</h3>
+          <span class="text-mute" style="font-size:11.5px;">HCR · sup +25% (36→43h) · sup +50% (>43h)</span>
+        </div>
+        <div class="panel-body nopad" style="overflow-x:auto;">
+          <table class="tbl tbl-compact">
+            <thead>
+              <tr>
+                <th>Salarié</th>
+                <th>Contrat</th>
+                <th>Taux €/h</th>
+                <th>H. norm.</th>
+                <th>Sup +25%</th>
+                <th>Sup +50%</th>
+                <th>Total H</th>
+                <th>Brut €</th>
+                <th>Repas</th>
+                <th>Coupures</th>
+                <th>Pourboires</th>
+                <th>Navigo</th>
+                <th>CP</th>
+                <th>AM</th>
+                <th>Abs.</th>
+                <th>Fériés</th>
               </tr>
-            ` : ''}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              ${data.map(d => {
+                const totalAbs = (d.leaves.absent_justifie||0) + (d.leaves.absent_injustifie||0);
+                return `
+                  <tr>
+                    <td>
+                      <div class="with-av">
+                        <div class="av-emp sm">${initials(d.emp)}</div>
+                        <div class="stack">
+                          <div style="font-weight:600;">${esc(d.emp.prenom)} ${esc(d.emp.nom)}</div>
+                          <div class="sub" style="text-decoration:none;cursor:default;">${esc(d.emp.poste||'—')}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td><span class="chip">${esc(d.emp.contrat||'—')} · ${d.n.heures||0}h</span></td>
+                    <td class="mono tabular">${d.n.taux ? d.n.taux.toFixed(2)+' €' : '—'}</td>
+                    <td class="mono tabular"><strong>${d.normalH.toFixed(1)} h</strong></td>
+                    <td class="mono tabular ${d.supplH25>0?'over':''}">${d.supplH25.toFixed(1)} h</td>
+                    <td class="mono tabular ${d.supplH50>0?'over':''}">${d.supplH50.toFixed(1)} h</td>
+                    <td class="mono tabular"><strong>${(d.normalH+d.supplH25+d.supplH50).toFixed(1)} h</strong></td>
+                    <td class="mono tabular"><strong>${d.totalBrutPlanifie.toFixed(2)} €</strong></td>
+                    <td class="mono tabular" title="${d.repas} repas × ${REPAS_HCR_VALEUR}€">${d.repas} · ${d.valeurRepas.toFixed(2)} €</td>
+                    <td class="mono tabular ${d.coupures > 0 ? 'over' : ''}">${d.coupures > 0 ? d.coupures.toFixed(1)+' h' : '—'}</td>
+                    <td class="mono tabular"><input type="number" class="input mini-input" data-tip="${d.emp.id}" value="${d.pourboires||''}" placeholder="0" step="0.01" style="width:70px;padding:4px 6px;font-size:11.5px;text-align:right;"></td>
+                    <td class="mono tabular">${d.navigoMensuel ? d.navigoMensuel.toFixed(2)+' €' : '—'}</td>
+                    <td class="mono tabular">${d.leaves.cp || '—'}</td>
+                    <td class="mono tabular">${d.leaves.arret_maladie || '—'}</td>
+                    <td class="mono tabular">${totalAbs || '—'}</td>
+                    <td class="mono tabular">${d.ferieWorked || '—'}</td>
+                  </tr>
+                `;
+              }).join('')}
+              ${data.length > 0 ? `
+                <tr class="row-total">
+                  <td><strong style="font-family:var(--f-display);font-size:15px;letter-spacing:-0.01em;">Total équipe</strong></td>
+                  <td>—</td>
+                  <td>—</td>
+                  <td class="mono tabular">${data.reduce((s,d) => s + d.normalH, 0).toFixed(1)} h</td>
+                  <td class="mono tabular">${data.reduce((s,d) => s + d.supplH25, 0).toFixed(1)} h</td>
+                  <td class="mono tabular">${data.reduce((s,d) => s + d.supplH50, 0).toFixed(1)} h</td>
+                  <td class="mono tabular"><strong>${teamTotalH.toFixed(1)} h</strong></td>
+                  <td class="mono tabular"><strong>${teamTotalBrut.toFixed(2)} €</strong></td>
+                  <td class="mono tabular"><strong>${data.reduce((s,d) => s + d.valeurRepas, 0).toFixed(2)} €</strong></td>
+                  <td class="mono tabular">${data.reduce((s,d) => s + d.coupures, 0).toFixed(1)} h</td>
+                  <td class="mono tabular"><strong>${data.reduce((s,d) => s + (d.pourboires||0), 0).toFixed(2)} €</strong></td>
+                  <td class="mono tabular">${data.reduce((s,d) => s + (d.navigoMensuel||0), 0).toFixed(2)} €</td>
+                  <td class="mono tabular">${data.reduce((s,d) => s + d.leaves.cp, 0) || '—'}</td>
+                  <td class="mono tabular">${data.reduce((s,d) => s + d.leaves.arret_maladie, 0) || '—'}</td>
+                  <td class="mono tabular">${data.reduce((s,d) => s + (d.leaves.absent_justifie||0) + (d.leaves.absent_injustifie||0), 0) || '—'}</td>
+                  <td class="mono tabular">${data.reduce((s,d) => s + d.ferieWorked, 0) || '—'}</td>
+                </tr>
+              ` : ''}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </div>
+    `}
 
     <div class="panel" style="margin-top:14px;">
       <div class="panel-head">
@@ -2484,6 +2608,11 @@ function bindHours() {
     state.page = 'employees';
     render();
   }));
+  const toggleBtn = $('#toggleHoursView');
+  if (toggleBtn) toggleBtn.addEventListener('click', () => {
+    state.hoursView = (state.hoursView || 'cards') === 'cards' ? 'table' : 'cards';
+    render();
+  });
   // Pourboires inputs — save on blur
   $$('[data-tip]').forEach(inp => {
     inp.addEventListener('change', ev => {
@@ -3911,9 +4040,9 @@ function pageAbsenceRequests() {
                 return `
                   <tr>
                     <td><div class="emp-cell"><div class="av-emp sm">${emp?initials(emp):'?'}</div><div class="emp-cell-name">${emp?esc(emp.prenom+' '+emp.nom):'(inconnu)'}</div></div></td>
-                    <td>${esc(lt?.label||r.type)}</td>
+                    <td><span class="chip ${r.status==='approved'?'good':r.status==='rejected'?'alert':'warn'}">${esc(lt?.label||r.type)}</span></td>
                     <td>${fmtDateShort(r.dateStart)} → ${fmtDateShort(r.dateEnd)}</td>
-                    <td class="mono">${r.nbJours||'?'}</td>
+                    <td class="mono">${r.nbJours||'?'} j</td>
                     <td class="mono" style="font-size:11.5px;">${r.createdAt?new Date(r.createdAt).toLocaleDateString('fr-FR'):'—'}</td>
                     <td class="text-mute" style="font-size:12px;">${esc(r.motif||'—')}</td>
                     ${tab==='pending' ? `
@@ -3922,7 +4051,15 @@ function pageAbsenceRequests() {
                         <button class="btn-sec" data-reject="${r.id}" style="padding:5px 10px;font-size:11.5px;">✗ Refuser</button>
                       </td>
                     ` : `
-                      <td class="text-mute" style="font-size:11.5px;">${r.decidedAt?new Date(r.decidedAt).toLocaleDateString('fr-FR'):'—'}${r.commentAdmin?'<br><em>'+esc(r.commentAdmin)+'</em>':''}</td>
+                      <td>
+                        <div style="display:flex;flex-direction:column;gap:4px;">
+                          <span class="text-mute" style="font-size:11.5px;">${r.decidedAt?new Date(r.decidedAt).toLocaleDateString('fr-FR'):'—'}${r.commentAdmin?'<br><em>'+esc(r.commentAdmin)+'</em>':''}</span>
+                          <div style="display:flex;gap:4px;">
+                            <button class="btn-ghost" data-edit-req="${r.id}" style="padding:4px 8px;font-size:11px;">✎ Modifier</button>
+                            <button class="btn-ghost" data-revert-req="${r.id}" style="padding:4px 8px;font-size:11px;color:var(--c-alert-text);">↺ Annuler</button>
+                          </div>
+                        </div>
+                      </td>
                     `}
                   </tr>
                 `;
@@ -3948,6 +4085,146 @@ function bindAbsenceRequests() {
     const id = ev.currentTarget.dataset.reject;
     rejectAbsenceRequest(id);
   }));
+  $$('[data-edit-req]').forEach(b => b.addEventListener('click', ev => {
+    openAbsenceEditor(ev.currentTarget.dataset.editReq);
+  }));
+  $$('[data-revert-req]').forEach(b => b.addEventListener('click', ev => {
+    revertAbsenceRequest(ev.currentTarget.dataset.revertReq);
+  }));
+}
+
+// ── Édition d'une demande validée/refusée ──
+function openAbsenceEditor(id) {
+  const r = state.absenceRequests[id];
+  if (!r) return;
+  const emp = state.employees.find(e => e.id === r.empId);
+  const wasApproved = r.status === 'approved';
+
+  const body = `
+    <div class="text-mute" style="font-size:12.5px;margin-bottom:14px;line-height:1.5;">
+      <strong>${emp?esc(emp.prenom+' '+emp.nom):'(inconnu)'}</strong> · demande créée le ${r.createdAt?new Date(r.createdAt).toLocaleDateString('fr-FR'):'—'}<br>
+      ${wasApproved ? 'Les jours déjà validés seront retirés du planning, puis les nouveaux jours seront posés.' : 'Modification d\'une demande refusée — tu peux la re-valider après en cliquant sur "Valider".'}
+    </div>
+
+    <div class="form-grid">
+      <div class="field"><label class="field-label">Type</label>
+        <select class="input" id="abEditType">
+          ${Object.entries(LEAVE_TYPES).map(([k,v]) => `<option value="${k}" ${r.type===k?'selected':''}>${esc(v.label)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label class="field-label">Date de début</label><input class="input" id="abEditStart" type="date" value="${r.dateStart}"></div>
+      <div class="field"><label class="field-label">Date de fin</label><input class="input" id="abEditEnd" type="date" value="${r.dateEnd}"></div>
+      <div class="field full"><label class="field-label">Motif</label><textarea class="input" id="abEditMotif" rows="2">${esc(r.motif||'')}</textarea></div>
+      <div class="field full"><label class="field-label">Commentaire admin</label><textarea class="input" id="abEditComment" rows="2">${esc(r.commentAdmin||'')}</textarea></div>
+    </div>
+  `;
+  const footer = `
+    <button class="btn-danger" id="abEditDelete" style="margin-right:auto;">Supprimer cette demande</button>
+    <button class="btn-sec" data-close>Annuler</button>
+    <button class="btn-pri" id="abEditSave" style="width:auto;">Enregistrer</button>
+  `;
+  const { close } = openModal({ title: 'Modifier la demande', body, footer });
+
+  $('#abEditSave').addEventListener('click', () => {
+    const newType = $('#abEditType').value;
+    const newStart = $('#abEditStart').value;
+    const newEnd = $('#abEditEnd').value;
+    if (!newStart || !newEnd || newEnd < newStart) { toast('Dates invalides', 'error'); return; }
+
+    const updates = {};
+
+    // Si validée : on retire les anciens shifts d'abord
+    if (wasApproved) {
+      const oldStart = new Date(r.dateStart);
+      const oldEnd = new Date(r.dateEnd);
+      for (let d = new Date(oldStart); d <= oldEnd; d = addDays(d, 1)) {
+        const wk = weekKey(d);
+        const dayIdx = (d.getDay() + 6) % 7;
+        const key = `${r.empId}_${dayIdx}_${wk}`;
+        delete state.shifts[key];
+        updates[`shifts/${key}`] = null;
+      }
+      // Pose les nouveaux
+      const ns = new Date(newStart);
+      const ne = new Date(newEnd);
+      for (let d = new Date(ns); d <= ne; d = addDays(d, 1)) {
+        const wk = weekKey(d);
+        const dayIdx = (d.getDay() + 6) % 7;
+        const key = `${r.empId}_${dayIdx}_${wk}`;
+        const newSh = [{ leaveType: newType, label: LEAVE_TYPES[newType]?.label || newType }];
+        state.shifts[key] = newSh;
+        updates[`shifts/${key}`] = newSh;
+      }
+    }
+
+    const nbJours = Math.round((new Date(newEnd) - new Date(newStart))/86400000) + 1;
+    const updatedReq = {
+      ...r,
+      type: newType,
+      dateStart: newStart,
+      dateEnd: newEnd,
+      nbJours,
+      motif: $('#abEditMotif').value.trim(),
+      commentAdmin: $('#abEditComment').value.trim(),
+      modifiedAt: new Date().toISOString(),
+      modifiedBy: 'admin',
+    };
+    state.absenceRequests[id] = updatedReq;
+    updates[`absenceRequests/${id}`] = updatedReq;
+    if (db) db.ref().update(updates).catch(e => console.warn(e));
+    toast(wasApproved ? 'Demande et planning mis à jour' : 'Demande modifiée', 'good');
+    close();
+    render();
+  });
+
+  $('#abEditDelete').addEventListener('click', () => {
+    if (!confirm('Supprimer définitivement cette demande ?\n\nSi elle était validée, les jours seront retirés du planning.')) return;
+    const updates = {};
+    if (wasApproved) {
+      const s = new Date(r.dateStart);
+      const e_ = new Date(r.dateEnd);
+      for (let d = new Date(s); d <= e_; d = addDays(d, 1)) {
+        const wk = weekKey(d);
+        const dayIdx = (d.getDay() + 6) % 7;
+        const key = `${r.empId}_${dayIdx}_${wk}`;
+        delete state.shifts[key];
+        updates[`shifts/${key}`] = null;
+      }
+    }
+    delete state.absenceRequests[id];
+    updates[`absenceRequests/${id}`] = null;
+    if (db) db.ref().update(updates).catch(e => console.warn(e));
+    toast('Demande supprimée', '');
+    close();
+    render();
+  });
+}
+
+// Annule la validation et remet en attente
+function revertAbsenceRequest(id) {
+  const r = state.absenceRequests[id];
+  if (!r) return;
+  if (!confirm('Repasser cette demande en "En attente" ?\n\nLes jours validés seront retirés du planning.')) return;
+
+  const updates = {};
+  if (r.status === 'approved') {
+    const s = new Date(r.dateStart);
+    const e_ = new Date(r.dateEnd);
+    for (let d = new Date(s); d <= e_; d = addDays(d, 1)) {
+      const wk = weekKey(d);
+      const dayIdx = (d.getDay() + 6) % 7;
+      const key = `${r.empId}_${dayIdx}_${wk}`;
+      delete state.shifts[key];
+      updates[`shifts/${key}`] = null;
+    }
+  }
+  const updated = { ...r, status: 'pending', decidedAt: null, decidedBy: null, commentAdmin: null };
+  state.absenceRequests[id] = updated;
+  updates[`absenceRequests/${id}`] = updated;
+  if (db) db.ref().update(updates).catch(e => console.warn(e));
+  state.reqTab = 'pending';
+  toast('Demande remise en attente', '');
+  render();
 }
 
 function approveAbsenceRequest(id) {
@@ -4251,18 +4528,62 @@ function bindRappels() {
 }
 
 // ─────────── ÉMARGEMENTS ───────────
+// ─────────── ÉMARGEMENTS — Prévisionnel + Effectif + Invalidation auto ───────────
+// Calcule un hash simple du planning d'un salarié pour une semaine donnée.
+// Sert à détecter si le planning a changé après émargement → invalide la signature.
+function weeklyPlanningHash(empId, wkKey) {
+  const parts = [];
+  for (let d = 0; d < 7; d++) {
+    const shifts = (state.shifts[`${empId}_${d}_${wkKey}`] || []).map(s => {
+      if (s.leaveType) return `L:${s.leaveType}`;
+      return `S:${s.type||''}:${s.start||''}:${s.end||''}:${s.pauseDuration||0}:${s.label||''}`;
+    });
+    parts.push(d + '=' + shifts.join('|'));
+  }
+  // Hash simple (somme de codes de caractères × position)
+  const str = parts.join(';');
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  }
+  return h.toString(36);
+}
+
+function emargementStatus(empId, wkKey) {
+  const sigKey = `${empId}_${wkKey}`;
+  const sig = state.emargements && state.emargements[sigKey];
+  const currentHash = weeklyPlanningHash(empId, wkKey);
+  if (!sig) return { state: 'unsigned', hash: currentHash };
+  if (sig.planningHash && sig.planningHash !== currentHash) {
+    return { state: 'invalidated', sig, currentHash, oldHash: sig.planningHash };
+  }
+  return { state: 'signed', sig, hash: currentHash };
+}
+
+function emargementEffectifStatus(empId, wkKey) {
+  const key = `${empId}_${wkKey}_effectif`;
+  const sig = state.emargements && state.emargements[key];
+  // Only available after the week ended
+  const wkDate = new Date(wkKey + 'T00:00:00');
+  const wkEnd = addDays(wkDate, 6); wkEnd.setHours(23,59,59,999);
+  const now = new Date();
+  if (now < wkEnd) return { state: 'too_early', wkEnd };
+  if (sig) return { state: 'signed', sig };
+  return { state: 'unsigned' };
+}
+
 function countUnsignedEmargements() {
-  // Compte les semaines publiées dont des salariés n'ont pas encore émargé
   let count = 0;
   const publishedWeeks = Object.keys(state.publications || {});
   const actives = state.employees.filter(e => e.statut === 'Actif');
   publishedWeeks.forEach(wk => {
     actives.forEach(emp => {
-      const sigKey = `${emp.id}_${wk}`;
       const hasShifts = [0,1,2,3,4,5,6].some(d => (state.shifts[`${emp.id}_${d}_${wk}`]||[]).length);
-      if (hasShifts && !(state.emargements && state.emargements[sigKey])) {
-        count++;
-      }
+      if (!hasShifts) return;
+      const prev = emargementStatus(emp.id, wk);
+      const eff = emargementEffectifStatus(emp.id, wk);
+      if (prev.state !== 'signed') count++;
+      if (eff.state === 'unsigned') count++;
     });
   });
   return count;
@@ -4289,8 +4610,11 @@ function pageEmargements() {
         <div style="display:flex;align-items:flex-start;gap:14px;">
           <div style="font-size:24px;line-height:1;">ℹ️</div>
           <div style="flex:1;font-size:13px;color:var(--c-ink-3);line-height:1.55;">
-            <strong>Fonctionnement de l'émargement</strong><br>
-            Chaque salarié émarge son planning hebdomadaire depuis son interface mobile une fois qu'il a pris connaissance des horaires. L'émargement est horodaté et conservé. En cas de contrôle URSSAF ou Inspection du travail, ces signatures prouvent que les horaires ont été portés à la connaissance du salarié.
+            <strong>Deux émargements par semaine</strong> pour couvrir l'article L3171-2 du Code du travail :
+            <ul style="margin:8px 0 0 18px;">
+              <li><strong>Prévisionnel</strong> : à la publication du planning. Si tu modifies le planning après signature, l'émargement est <em>automatiquement invalidé</em> et le salarié doit re-signer.</li>
+              <li><strong>Effectif</strong> : disponible côté salarié à partir du dimanche soir. Confirme les heures réellement travaillées. Conservation obligatoire 1 an minimum.</li>
+            </ul>
           </div>
         </div>
       </div>
@@ -4302,15 +4626,18 @@ function pageEmargements() {
       </div></div>
     ` : `
       <div class="panel">
-        <div class="panel-head"><h3>Suivi sur les 12 dernières semaines publiées</h3></div>
+        <div class="panel-head"><h3>Suivi des émargements · 12 dernières semaines</h3></div>
         <div class="panel-body nopad" style="overflow-x:auto;">
           <table class="tbl tbl-compact">
             <thead>
               <tr>
-                <th>Semaine</th>
-                <th>Publication</th>
-                ${actives.map(e => `<th style="text-align:center;font-size:10.5px;">${esc(e.prenom)}</th>`).join('')}
-                <th>État</th>
+                <th rowspan="2" style="vertical-align:middle;">Semaine</th>
+                <th rowspan="2" style="vertical-align:middle;">Publication</th>
+                ${actives.map(e => `<th colspan="2" style="text-align:center;font-size:10.5px;border-bottom:1px solid var(--c-line-2);">${esc(e.prenom)}</th>`).join('')}
+                <th rowspan="2" style="vertical-align:middle;">État global</th>
+              </tr>
+              <tr>
+                ${actives.map(() => `<th style="text-align:center;font-size:9.5px;color:var(--c-ink-5);font-weight:400;">prév.</th><th style="text-align:center;font-size:9.5px;color:var(--c-ink-5);font-weight:400;">effect.</th>`).join('')}
               </tr>
             </thead>
             <tbody>
@@ -4318,29 +4645,48 @@ function pageEmargements() {
                 const pub = state.publications[wk];
                 const wkDate = new Date(wk + 'T00:00:00');
                 const wkEnd = addDays(wkDate, 6);
-                let signed = 0, expected = 0;
+                let signedPrev = 0, signedEff = 0, expectedPrev = 0, expectedEff = 0;
                 const cells = actives.map(emp => {
                   const hasShifts = [0,1,2,3,4,5,6].some(d => (state.shifts[`${emp.id}_${d}_${wk}`]||[]).length);
-                  if (!hasShifts) return `<td style="text-align:center;color:var(--c-ink-5);">—</td>`;
-                  expected++;
-                  const sig = state.emargements && state.emargements[`${emp.id}_${wk}`];
-                  if (sig) {
-                    signed++;
-                    const sigDate = new Date(sig.signedAt);
-                    return `<td style="text-align:center;color:var(--c-good-dark);" title="Signé le ${sigDate.toLocaleString('fr-FR')}">✓</td>`;
+                  if (!hasShifts) return `<td style="text-align:center;color:var(--c-ink-5);">—</td><td style="text-align:center;color:var(--c-ink-5);">—</td>`;
+                  expectedPrev++;
+                  // Prévisionnel
+                  const prev = emargementStatus(emp.id, wk);
+                  let prevCell;
+                  if (prev.state === 'signed') {
+                    signedPrev++;
+                    prevCell = `<td style="text-align:center;color:var(--c-good-dark);" title="Signé le ${new Date(prev.sig.signedAt).toLocaleString('fr-FR')}">✓</td>`;
+                  } else if (prev.state === 'invalidated') {
+                    prevCell = `<td style="text-align:center;color:var(--c-warn-dark);font-weight:700;" title="Planning modifié — à re-signer (signé le ${new Date(prev.sig.signedAt).toLocaleString('fr-FR')})">⚠</td>`;
                   } else {
-                    return `<td style="text-align:center;color:var(--c-warn-dark);" title="En attente">○</td>`;
+                    prevCell = `<td style="text-align:center;color:var(--c-warn-dark);" title="En attente">○</td>`;
                   }
+                  // Effectif
+                  const eff = emargementEffectifStatus(emp.id, wk);
+                  let effCell;
+                  if (eff.state === 'signed') {
+                    signedEff++;
+                    expectedEff++;
+                    effCell = `<td style="text-align:center;color:var(--c-good-dark);" title="Heures confirmées : ${eff.sig.totalHeures?eff.sig.totalHeures.toFixed(1)+'h, ':''}signé le ${new Date(eff.sig.signedAt).toLocaleString('fr-FR')}">✓</td>`;
+                  } else if (eff.state === 'too_early') {
+                    effCell = `<td style="text-align:center;color:var(--c-ink-5);" title="Semaine non terminée">…</td>`;
+                  } else {
+                    expectedEff++;
+                    effCell = `<td style="text-align:center;color:var(--c-warn-dark);" title="En attente confirmation heures effectuées">○</td>`;
+                  }
+                  return prevCell + effCell;
                 }).join('');
-                const allSigned = expected > 0 && signed === expected;
+                const allPrev = expectedPrev > 0 && signedPrev === expectedPrev;
+                const allEff = expectedEff > 0 && signedEff === expectedEff;
+                const stateChip = (allPrev && (allEff || expectedEff === 0)) ? `<span class="chip good">✓ Complet</span>`
+                  : (allPrev && expectedEff > 0 ? `<span class="chip warn">Prév ✓ · Eff ${signedEff}/${expectedEff}</span>`
+                  : `<span class="chip warn">${signedPrev}/${expectedPrev} prév</span>`);
                 return `
                   <tr>
                     <td><strong>${fmtDateShort(wkDate)}</strong><br><span class="text-mute" style="font-size:11px;">au ${fmtDateShort(wkEnd)}</span></td>
                     <td class="text-mute" style="font-size:11.5px;">${new Date(pub.publishedAt).toLocaleDateString('fr-FR',{day:'numeric',month:'short'})}</td>
                     ${cells}
-                    <td>${allSigned
-                      ? `<span class="chip good">✓ Complet</span>`
-                      : `<span class="chip ${expected > 0 ? 'warn' : ''}">${signed}/${expected}</span>`}</td>
+                    <td>${stateChip}</td>
                   </tr>
                 `;
               }).join('')}
@@ -4350,8 +4696,8 @@ function pageEmargements() {
       </div>
     `}
 
-    <div style="margin-top:14px;font-size:12px;color:var(--c-ink-4);">
-      Légende : <span style="color:var(--c-good-dark);">✓ signé</span> · <span style="color:var(--c-warn-dark);">○ en attente</span> · — pas de shift cette semaine
+    <div style="margin-top:14px;font-size:12px;color:var(--c-ink-4);line-height:1.7;">
+      Légende : <span style="color:var(--c-good-dark);font-weight:600;">✓ signé</span> · <span style="color:var(--c-warn-dark);">○ en attente</span> · <span style="color:var(--c-warn-dark);font-weight:700;">⚠ à re-signer (planning modifié)</span> · <span style="color:var(--c-ink-5);">… semaine non terminée</span> · — pas de shift cette semaine
     </div>
   `;
 }
@@ -4971,6 +5317,8 @@ function bindEmpWeek() {
     else state.weekStart = getMonday(new Date());
     render();
   }));
+
+  // Émargement prévisionnel (planning)
   const emargerBtn = $('#emargerBtn');
   if (emargerBtn) {
     emargerBtn.addEventListener('click', () => {
@@ -4982,13 +5330,43 @@ function bindEmpWeek() {
         signedAt: new Date().toISOString(),
         userAgent: navigator.userAgent.slice(0, 200),
         empId, weekKey: wk,
+        planningHash: weeklyPlanningHash(empId, wk),
+        type: 'previsionnel',
       };
       state.emargements = state.emargements || {};
       state.emargements[sigKey] = sig;
-      if (db) {
-        db.ref(`emargements/${sigKey}`).set(sig);
-      }
+      if (db) db.ref(`emargements/${sigKey}`).set(sig);
       toast('Planning émargé. Merci !', 'good');
+      render();
+    });
+  }
+
+  // Émargement effectif (heures réellement faites — fin de semaine)
+  const effBtn = $('#emargerEffectifBtn');
+  if (effBtn) {
+    effBtn.addEventListener('click', () => {
+      const empId = state.user.empId;
+      const wk = weekKey(state.weekStart);
+      const effKey = `${empId}_${wk}_effectif`;
+      // Calcule les heures effectivement faites selon le planning
+      let totalH = 0;
+      for (let d = 0; d < 7; d++) {
+        const shifts = (state.shifts[`${empId}_${d}_${wk}`] || []).map(normShift);
+        shifts.forEach(s => totalH += shiftHours(s));
+      }
+      if (!confirm(`Tu confirmes avoir effectivement travaillé ${totalH.toFixed(1)} heures cette semaine ?\n\nCette signature engage ta responsabilité et sera conservée 1 an minimum (article D3171-13 du Code du travail).`)) return;
+      const sig = {
+        signedAt: new Date().toISOString(),
+        userAgent: navigator.userAgent.slice(0, 200),
+        empId, weekKey: wk,
+        planningHash: weeklyPlanningHash(empId, wk),
+        totalHeures: totalH,
+        type: 'effectif',
+      };
+      state.emargements = state.emargements || {};
+      state.emargements[effKey] = sig;
+      if (db) db.ref(`emargements/${effKey}`).set(sig);
+      toast('Heures confirmées. Merci !', 'good');
       render();
     });
   }
@@ -5376,28 +5754,79 @@ function empWeek() {
     `}
 
     ${wkPublished && totalH > 0 ? (() => {
-      const sigKey = `${empId}_${wk}`;
-      const sig = state.emargements && state.emargements[sigKey];
-      if (sig) {
-        return `
+      const prev = emargementStatus(empId, wk);
+      const eff = emargementEffectifStatus(empId, wk);
+
+      // Carte 1 : émargement prévisionnel (planning)
+      let prevCard = '';
+      if (prev.state === 'signed') {
+        prevCard = `
           <div class="emargement-card signed">
             <div style="font-size:22px;line-height:1;">✓</div>
             <div style="flex:1;">
-              <div style="font-weight:600;font-size:13.5px;">Planning émargé</div>
-              <div class="text-mute" style="font-size:12px;">Signé le ${new Date(sig.signedAt).toLocaleString('fr-FR',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
+              <div style="font-weight:600;font-size:13.5px;">Planning prévisionnel — émargé</div>
+              <div class="text-mute" style="font-size:12px;">Signé le ${new Date(prev.sig.signedAt).toLocaleString('fr-FR',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
             </div>
           </div>
         `;
-      }
-      return `
-        <div class="emargement-card unsigned">
-          <div style="flex:1;">
-            <div style="font-weight:600;font-size:14px;margin-bottom:4px;">Émargement de la semaine</div>
-            <div class="text-mute" style="font-size:12.5px;line-height:1.45;">En cliquant sur "J'émarge", tu confirmes avoir pris connaissance de ton planning pour cette semaine. Cette signature est horodatée et conservée comme preuve légale.</div>
+      } else if (prev.state === 'invalidated') {
+        prevCard = `
+          <div class="emargement-card invalidated">
+            <div style="font-size:22px;line-height:1;">⚠️</div>
+            <div style="flex:1;">
+              <div style="font-weight:600;font-size:14px;margin-bottom:4px;">Planning modifié depuis ta dernière signature</div>
+              <div class="text-mute" style="font-size:12.5px;line-height:1.45;">Tu avais signé le ${new Date(prev.sig.signedAt).toLocaleDateString('fr-FR')}, mais ton planning a été modifié depuis. Merci de re-confirmer après vérification.</div>
+            </div>
+            <button class="btn-pri" id="emargerBtn" style="width:auto;flex-shrink:0;">Re-signer ✍️</button>
           </div>
-          <button class="btn-pri" id="emargerBtn" style="width:auto;flex-shrink:0;">J'émarge ✍️</button>
-        </div>
-      `;
+        `;
+      } else {
+        prevCard = `
+          <div class="emargement-card unsigned">
+            <div style="flex:1;">
+              <div style="font-weight:600;font-size:14px;margin-bottom:4px;">Planning prévisionnel — à émarger</div>
+              <div class="text-mute" style="font-size:12.5px;line-height:1.45;">En cliquant, tu confirmes avoir pris connaissance de ton planning pour cette semaine. Cette signature est horodatée.</div>
+            </div>
+            <button class="btn-pri" id="emargerBtn" style="width:auto;flex-shrink:0;">J'émarge ✍️</button>
+          </div>
+        `;
+      }
+
+      // Carte 2 : émargement effectif (heures réellement faites — fin de semaine seulement)
+      let effCard = '';
+      if (eff.state === 'too_early') {
+        effCard = `
+          <div class="emargement-card future">
+            <div style="font-size:22px;line-height:1;">⏳</div>
+            <div style="flex:1;">
+              <div style="font-weight:600;font-size:13.5px;">Émargement des heures effectuées</div>
+              <div class="text-mute" style="font-size:12px;">Disponible à partir du dimanche soir, à la fin de cette semaine</div>
+            </div>
+          </div>
+        `;
+      } else if (eff.state === 'signed') {
+        effCard = `
+          <div class="emargement-card signed">
+            <div style="font-size:22px;line-height:1;">✓✓</div>
+            <div style="flex:1;">
+              <div style="font-weight:600;font-size:13.5px;">Heures effectuées — émargées</div>
+              <div class="text-mute" style="font-size:12px;">${eff.sig.totalHeures ? eff.sig.totalHeures.toFixed(1)+' h confirmées · ' : ''}Signé le ${new Date(eff.sig.signedAt).toLocaleString('fr-FR',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'})}</div>
+            </div>
+          </div>
+        `;
+      } else {
+        effCard = `
+          <div class="emargement-card unsigned-effectif">
+            <div style="flex:1;">
+              <div style="font-weight:600;font-size:14px;margin-bottom:4px;">📊 Confirmation des heures effectuées</div>
+              <div class="text-mute" style="font-size:12.5px;line-height:1.45;">La semaine est terminée. Confirme que tu as bien travaillé <strong>${totalH.toFixed(1)} h</strong> selon le planning. Cette signature est conservée 1 an minimum (article D3171-13).</div>
+            </div>
+            <button class="btn-pri" id="emargerEffectifBtn" style="width:auto;flex-shrink:0;">Je confirme</button>
+          </div>
+        `;
+      }
+
+      return prevCard + effCard;
     })() : ''}
   `;
 }
