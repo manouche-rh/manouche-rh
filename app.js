@@ -285,6 +285,7 @@ const state = {
   affichages: {},    // key affichage name → {present, photoDocId, updatedAt}
   payslips: {},      // key `${empId}_${yyyy-mm}` → {docId, sentAt, ackBy?}
   adminCredentials: null, // {username, passwordHash}
+  brouillon: null,   // planning bis: {savedAt, note, shifts:{empId_dayIdx:[...]}}
   weekStart: getMonday(new Date()),
   fbReady: false,
   page: null,        // current page id
@@ -333,6 +334,7 @@ function normEmp(e) {
     certifHACCPDate: '',
     permisB: false, permisBFin: '',
     peutSeConnecter: true,
+    pole: 'resto',             // 'resto' (équipe restaurant) ou 'labo'
     // NOUVEAU — Modalités de paie spécifiques
     exclureCP: false,          // pas de gestion de congés payés (extra, etc.)
     sansHeuresSupp: false,     // toutes les heures au taux normal
@@ -1013,7 +1015,7 @@ const DOC_CATEGORIES = {
 
 function fbListen() {
   if (!db) return;
-  ['employees','shifts','punches','publications','absenceRequests','emargements','pourboires','duerp','affichages','payslips','adminCredentials'].forEach(k => {
+  ['employees','shifts','punches','publications','absenceRequests','emargements','pourboires','duerp','affichages','payslips','adminCredentials','brouillon'].forEach(k => {
     db.ref(k).on('value', snap => {
       const v = snap.val();
       if (k === 'employees' && v) {
@@ -1042,6 +1044,7 @@ function fbListen() {
       if (k === 'affichages' && v) state.affichages = v;
       if (k === 'payslips' && v) state.payslips = v;
       if (k === 'adminCredentials' && v) state.adminCredentials = v;
+      if (k === 'brouillon') state.brouillon = v || null;
       render();
     }, err => {
       console.error('[fb] read error on', k, err);
@@ -1727,7 +1730,9 @@ function pagePlanning() {
 
     <div class="row plan-actions">
       <button class="btn-sec" id="dupFromPrev" ${prevWeekShiftCount > 0 ? '' : 'disabled style="opacity:.4;"'}>↺ Dupliquer la semaine précédente</button>
+      <button class="btn-sec" id="dupToNext" ${weekShiftCount > 0 ? '' : 'disabled style="opacity:.4;"'}>⇉ Dupliquer sur les prochaines semaines</button>
       <button class="btn-sec" id="clearWeek" ${weekShiftCount > 0 ? '' : 'disabled style="opacity:.4;"'}>🗑 Vider la semaine</button>
+      <button class="btn-sec" id="openBrouillon">📝 Brouillon</button>
       <button class="btn-sec" id="exportCsv" ${weekShiftCount > 0 ? '' : 'disabled style="opacity:.4;"'}>↓ CSV</button>
       <button class="btn-sec" id="exportPdf" ${weekShiftCount > 0 ? '' : 'disabled style="opacity:.4;"'}>↓ PDF</button>
       <div class="spacer"></div>
@@ -1762,39 +1767,50 @@ function pagePlanning() {
                 ${fer ? `<div class="ferie-tag" title="${esc(fer.long)}">${esc(fer.short)}</div>` : (vac ? `<div class="vacances-tag" title="Vacances scolaires Zone C">🎒 ${esc(vac.name)}</div>` : '')}
               </div>`;
             }).join('')}
-            ${actives.map(e => {
-              let empWeekH = 0;
-              for (let d = 0; d < 7; d++) {
-                const shifts = state.shifts[`${e.id}_${d}_${wk}`] || [];
-                shifts.forEach(s => empWeekH += shiftHours(s));
-              }
-              const contractH = e.heures || 35;
-              const gap = empWeekH - contractH;
-              const gapClass = Math.abs(gap) < 0.5 ? 'gap-ok' : (gap > 0 ? 'gap-over' : 'gap-under');
-              const empWeekHStr = empWeekH > 0 ? (Math.floor(empWeekH) + 'h' + (empWeekH % 1 > 0 ? pad(Math.round((empWeekH % 1) * 60)) : '')) : '0h';
-              return `
-              <div class="plan-cell emp">
-                <div class="emp-row">
-                  <div class="av-emp sm">${initials(e)}</div>
-                  <div class="emp-nm-wrap">
-                    <div class="nm">${esc(e.prenom)}</div>
-                    <div class="emp-stats">
-                      <span class="chip-tiny">${contractH}h</span>
-                      <span class="chip-tiny ${gapClass}">${empWeekHStr}</span>
+            ${(() => {
+              const renderEmpRow = (e) => {
+                let empWeekH = 0;
+                for (let d = 0; d < 7; d++) {
+                  const shifts = state.shifts[`${e.id}_${d}_${wk}`] || [];
+                  shifts.forEach(s => empWeekH += shiftHours(s));
+                }
+                const contractH = e.heures || 35;
+                const gap = empWeekH - contractH;
+                const gapClass = Math.abs(gap) < 0.5 ? 'gap-ok' : (gap > 0 ? 'gap-over' : 'gap-under');
+                const empWeekHStr = empWeekH > 0 ? (Math.floor(empWeekH) + 'h' + (empWeekH % 1 > 0 ? pad(Math.round((empWeekH % 1) * 60)) : '')) : '0h';
+                return `
+                  <div class="plan-cell emp">
+                    <div class="emp-row">
+                      <div class="av-emp sm">${initials(e)}</div>
+                      <div class="emp-nm-wrap">
+                        <div class="nm">${esc(e.prenom)}</div>
+                        <div class="emp-stats">
+                          <span class="chip-tiny">${contractH}h</span>
+                          <span class="chip-tiny ${gapClass}">${empWeekHStr}</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </div>
-              ${[0,1,2,3,4,5,6].map(d => {
-                const dateD = addDays(state.weekStart, d);
-                const ferD = holidayFor(dateD);
-                const vacD = schoolHolidayFor(dateD);
-                const shifts = (state.shifts[`${e.id}_${d}_${wk}`] || []).map(normShift);
-                return `<div class="plan-cell cell ${shifts.length?'has':''} ${ferD?'ferie-cell':''} ${vacD && !ferD?'vacances-cell':''}" data-edit="${e.id}_${d}">
-                  ${shifts.map(s => renderShiftCell(s)).join('')}
-                </div>`;
-              }).join('')}
-            `}).join('')}
+                  ${[0,1,2,3,4,5,6].map(d => {
+                    const dateD = addDays(state.weekStart, d);
+                    const ferD = holidayFor(dateD);
+                    const vacD = schoolHolidayFor(dateD);
+                    const shifts = (state.shifts[`${e.id}_${d}_${wk}`] || []).map(normShift);
+                    return `<div class="plan-cell cell ${shifts.length?'has':''} ${ferD?'ferie-cell':''} ${vacD && !ferD?'vacances-cell':''}" data-edit="${e.id}_${d}">
+                      ${shifts.map(s => renderShiftCell(s)).join('')}
+                    </div>`;
+                  }).join('')}
+                `;
+              };
+              const restoTeam = actives.filter(e => normEmp(e).pole !== 'labo');
+              const laboTeam = actives.filter(e => normEmp(e).pole === 'labo');
+              let html = restoTeam.map(renderEmpRow).join('');
+              if (laboTeam.length) {
+                html += `<div class="plan-section-row"><span class="plan-section-tag">🥖 Labo</span><span class="plan-section-sub">${laboTeam.length} salarié${laboTeam.length>1?'s':''}</span></div>`;
+                html += laboTeam.map(renderEmpRow).join('');
+              }
+              return html;
+            })()}
           </div>
         </div>
       </div>
@@ -1844,6 +1860,12 @@ function bindPlanning() {
 
   const dupBtn = $('#dupFromPrev');
   if (dupBtn) dupBtn.addEventListener('click', () => duplicatePreviousWeek());
+
+  const dupNextBtn = $('#dupToNext');
+  if (dupNextBtn) dupNextBtn.addEventListener('click', () => openDuplicateToNext());
+
+  const brouillonBtn = $('#openBrouillon');
+  if (brouillonBtn) brouillonBtn.addEventListener('click', () => openBrouillonManager());
 
   const clearBtn = $('#clearWeek');
   if (clearBtn) clearBtn.addEventListener('click', () => clearCurrentWeek());
@@ -1935,6 +1957,256 @@ function duplicatePreviousWeek() {
   if (db) db.ref('shifts').update(updates).catch(e => console.warn(e));
   toast(`${count} shifts dupliqués`, 'good');
   render();
+}
+
+// ─────────── DUPLICATION SUR PLUSIEURS SEMAINES ───────────
+function openDuplicateToNext() {
+  const srcWk = weekKey(state.weekStart);
+  const srcLabel = state.weekStart.toLocaleDateString('fr-FR', {day:'numeric',month:'long'});
+  const body = `
+    <div class="text-mute" style="font-size:13px;line-height:1.55;margin-bottom:18px;">
+      Copie l'intégralité de la semaine du <strong>${srcLabel}</strong> (shifts de travail <strong>et</strong> congés/absences) sur les semaines suivantes.
+    </div>
+    <div class="form-grid">
+      <div class="field full">
+        <label class="field-label">Nombre de semaines à remplir</label>
+        <input class="input" id="dupCount" type="number" min="1" max="26" value="4">
+        <div class="text-mute" style="font-size:11.5px;margin-top:4px;">Les ${4} prochaines semaines après celle du ${srcLabel}, par défaut.</div>
+      </div>
+      <div class="field full">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+          <input type="checkbox" id="dupOverwrite" checked>
+          Écraser les semaines qui contiennent déjà des shifts
+        </label>
+        <div class="text-mute" style="font-size:11.5px;margin-top:4px;">Si décoché, les semaines déjà remplies sont ignorées.</div>
+      </div>
+      <div class="field full">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+          <input type="checkbox" id="dupSkipPublished" checked>
+          Ne pas toucher aux semaines déjà publiées
+        </label>
+      </div>
+    </div>
+    <div class="info-banner" style="background:var(--c-warn-bg);border-left:3px solid var(--c-warn-text);padding:11px 13px;border-radius:8px;font-size:12px;color:var(--c-warn-dark);margin-top:14px;line-height:1.5;">
+      Les semaines créées restent en <strong>brouillon</strong> — tu devras les publier une par une quand elles seront prêtes.
+    </div>
+  `;
+  const footer = `
+    <button class="btn-sec" data-close>Annuler</button>
+    <button class="btn-pri" id="dupConfirm" style="width:auto;">Dupliquer</button>
+  `;
+  const { close } = openModal({ title: 'Dupliquer sur plusieurs semaines', body, footer });
+
+  $('#dupConfirm').addEventListener('click', () => {
+    const count = Math.max(1, Math.min(26, parseInt($('#dupCount').value) || 4));
+    const overwrite = $('#dupOverwrite').checked;
+    const skipPublished = $('#dupSkipPublished').checked;
+    const updates = {};
+    let weeksFilled = 0, weeksSkipped = 0, shiftsCopied = 0;
+
+    // Snapshot de la semaine source
+    const srcSnapshot = [];
+    state.employees.forEach(emp => {
+      for (let d = 0; d < 7; d++) {
+        const sh = state.shifts[`${emp.id}_${d}_${srcWk}`];
+        if (sh && sh.length) srcSnapshot.push({ empId: emp.id, d, shifts: sh });
+      }
+    });
+
+    for (let i = 1; i <= count; i++) {
+      const targetDate = addDays(state.weekStart, 7 * i);
+      const targetWk = weekKey(targetDate);
+
+      if (skipPublished && state.publications[targetWk]) { weeksSkipped++; continue; }
+
+      const hasShifts = state.employees.some(emp =>
+        [0,1,2,3,4,5,6].some(d => (state.shifts[`${emp.id}_${d}_${targetWk}`]||[]).length)
+      );
+      if (hasShifts && !overwrite) { weeksSkipped++; continue; }
+
+      // Si on écrase : vider d'abord la semaine cible
+      if (hasShifts && overwrite) {
+        state.employees.forEach(emp => {
+          for (let d = 0; d < 7; d++) {
+            const k = `${emp.id}_${d}_${targetWk}`;
+            if (state.shifts[k]) { delete state.shifts[k]; updates[k] = null; }
+          }
+        });
+      }
+
+      // Copier le snapshot
+      srcSnapshot.forEach(item => {
+        const newKey = `${item.empId}_${item.d}_${targetWk}`;
+        const copy = JSON.parse(JSON.stringify(item.shifts));
+        state.shifts[newKey] = copy;
+        updates[newKey] = copy;
+        shiftsCopied += copy.length;
+      });
+      weeksFilled++;
+    }
+
+    if (db && Object.keys(updates).length) db.ref('shifts').update(updates).catch(e => console.warn(e));
+    let msg = `${weeksFilled} semaine${weeksFilled>1?'s':''} remplie${weeksFilled>1?'s':''} · ${shiftsCopied} shifts`;
+    if (weeksSkipped > 0) msg += ` · ${weeksSkipped} ignorée${weeksSkipped>1?'s':''}`;
+    toast(msg, 'good', 4000);
+    close();
+    render();
+  });
+}
+
+// ─────────── BROUILLON — Planning bis invisible aux salariés ───────────
+// Stocké dans state.brouillon = { savedAt, shifts: {empId_dayIdx: [...]}, note }
+function openBrouillonManager() {
+  const b = state.brouillon || null;
+  const curWk = weekKey(state.weekStart);
+  const curLabel = state.weekStart.toLocaleDateString('fr-FR', {day:'numeric',month:'long'});
+
+  const body = `
+    <div class="text-mute" style="font-size:13px;line-height:1.55;margin-bottom:18px;">
+      Le brouillon est un <strong>planning bis</strong> indépendant des semaines réelles. Tu construis une semaine-type tranquillement ici — les salariés ne la voient jamais — puis tu l'appliques sur la semaine de ton choix quand elle est prête.
+    </div>
+
+    ${b ? `
+      <div class="panel" style="border:1px solid var(--c-line);margin-bottom:16px;">
+        <div class="panel-body" style="padding:14px 16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+            <div>
+              <div style="font-weight:700;font-size:14px;">${esc(b.note || 'Brouillon enregistré')}</div>
+              <div class="text-mute" style="font-size:11.5px;margin-top:2px;">
+                ${Object.keys(b.shifts||{}).length} cases · enregistré le ${new Date(b.savedAt).toLocaleString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}
+              </div>
+            </div>
+            <button class="btn-ghost" id="brDelete" style="color:var(--c-alert-text);">Supprimer</button>
+          </div>
+        </div>
+      </div>
+    ` : `
+      <div class="panel" style="border:1px dashed var(--c-line);margin-bottom:16px;background:var(--c-paper);">
+        <div class="panel-body" style="text-align:center;padding:18px;">
+          <div class="text-mute" style="font-size:13px;">Aucun brouillon enregistré pour l'instant.</div>
+        </div>
+      </div>
+    `}
+
+    <div class="modal-section-title">1 · Créer / mettre à jour le brouillon</div>
+    <div class="text-mute" style="font-size:12px;margin-bottom:10px;line-height:1.5;">
+      Copie la semaine actuellement affichée (${curLabel}) dans le brouillon. Tu pourras ensuite la retoucher.
+    </div>
+    <div class="form-grid">
+      <div class="field full">
+        <label class="field-label">Nom du brouillon (optionnel)</label>
+        <input class="input" id="brNote" value="${b ? esc(b.note||'') : ''}" placeholder="ex : Semaine-type été, Équipe réduite...">
+      </div>
+    </div>
+    <button class="btn-sec" id="brSaveFromWeek" style="width:100%;margin-top:8px;">📋 Copier la semaine du ${curLabel} dans le brouillon</button>
+
+    ${b ? `
+      <div class="modal-section-title" style="margin-top:22px;">2 · Appliquer le brouillon sur une semaine</div>
+      <div class="text-mute" style="font-size:12px;margin-bottom:10px;line-height:1.5;">
+        Le contenu du brouillon sera copié sur la semaine choisie (en brouillon — à publier ensuite).
+      </div>
+      <div class="form-grid">
+        <div class="field full">
+          <label class="field-label">Semaine cible</label>
+          <select class="input" id="brTargetWeek">
+            ${(() => {
+              let opts = '';
+              for (let i = 0; i <= 12; i++) {
+                const dt = addDays(getMonday(new Date()), 7 * i);
+                const wk = weekKey(dt);
+                const pub = state.publications[wk] ? ' — publiée' : '';
+                opts += `<option value="${wk}" ${wk===curWk?'selected':''}>Semaine du ${dt.toLocaleDateString('fr-FR',{day:'numeric',month:'long'})}${pub}</option>`;
+              }
+              return opts;
+            })()}
+          </select>
+        </div>
+        <div class="field full">
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+            <input type="checkbox" id="brOverwrite" checked>
+            Écraser le planning existant de la semaine cible
+          </label>
+        </div>
+      </div>
+      <button class="btn-pri" id="brApply" style="width:100%;margin-top:8px;">✓ Appliquer le brouillon sur cette semaine</button>
+    ` : ''}
+  `;
+  const footer = `<button class="btn-sec" data-close>Fermer</button>`;
+  const { close } = openModal({ title: 'Brouillon de planning', body, footer });
+
+  // Sauvegarder le brouillon depuis la semaine affichée
+  $('#brSaveFromWeek').addEventListener('click', () => {
+    const shifts = {};
+    state.employees.forEach(emp => {
+      for (let d = 0; d < 7; d++) {
+        const sh = state.shifts[`${emp.id}_${d}_${curWk}`];
+        if (sh && sh.length) shifts[`${emp.id}_${d}`] = JSON.parse(JSON.stringify(sh));
+      }
+    });
+    if (Object.keys(shifts).length === 0) {
+      toast('La semaine affichée est vide — rien à copier', 'error');
+      return;
+    }
+    const brouillon = {
+      savedAt: new Date().toISOString(),
+      note: $('#brNote').value.trim(),
+      shifts,
+    };
+    state.brouillon = brouillon;
+    if (db) db.ref('brouillon').set(brouillon).catch(e => console.warn(e));
+    toast(`Brouillon enregistré (${Object.keys(shifts).length} cases)`, 'good');
+    close();
+    openBrouillonManager();
+  });
+
+  // Supprimer le brouillon
+  const delBtn = $('#brDelete');
+  if (delBtn) delBtn.addEventListener('click', () => {
+    if (!confirm('Supprimer le brouillon ?')) return;
+    state.brouillon = null;
+    if (db) db.ref('brouillon').remove();
+    toast('Brouillon supprimé', '');
+    close();
+    openBrouillonManager();
+  });
+
+  // Appliquer le brouillon sur une semaine
+  const applyBtn = $('#brApply');
+  if (applyBtn) applyBtn.addEventListener('click', () => {
+    const targetWk = $('#brTargetWeek').value;
+    const overwrite = $('#brOverwrite').checked;
+    if (!b || !b.shifts) return;
+
+    const targetLabel = new Date(targetWk + 'T00:00:00').toLocaleDateString('fr-FR', {day:'numeric',month:'long'});
+    if (state.publications[targetWk]) {
+      if (!confirm(`La semaine du ${targetLabel} est déjà publiée.\n\nAppliquer le brouillon va modifier un planning que les salariés voient. Continuer ?`)) return;
+    }
+
+    const updates = {};
+    // Vider la semaine cible si écrasement
+    if (overwrite) {
+      state.employees.forEach(emp => {
+        for (let d = 0; d < 7; d++) {
+          const k = `${emp.id}_${d}_${targetWk}`;
+          if (state.shifts[k]) { delete state.shifts[k]; updates[k] = null; }
+        }
+      });
+    }
+    // Appliquer le brouillon
+    let count = 0;
+    Object.entries(b.shifts).forEach(([key, sh]) => {
+      const newKey = `${key}_${targetWk}`;
+      const copy = JSON.parse(JSON.stringify(sh));
+      state.shifts[newKey] = copy;
+      updates[newKey] = copy;
+      count += copy.length;
+    });
+    if (db && Object.keys(updates).length) db.ref('shifts').update(updates).catch(e => console.warn(e));
+    toast(`Brouillon appliqué sur la semaine du ${targetLabel} (${count} shifts)`, 'good', 4000);
+    close();
+    state.weekStart = getMonday(new Date(targetWk + 'T00:00:00'));
+    render();
+  });
 }
 
 function openShiftEditor(empId, dayIdx) {
@@ -2323,7 +2595,11 @@ function pageHours() {
       repas: hcr.repas, valeurRepas: hcr.valeurRepas, coupures: hcr.coupures,
       pourboires, sparkWeeks,
     };
-  }).filter(d => !d.n.exclurePaie);
+  }).filter(d => !d.n.exclurePaie).sort((a,b) => {
+    const pa = a.n.pole === 'labo' ? 1 : 0;
+    const pb = b.n.pole === 'labo' ? 1 : 0;
+    return pa - pb;
+  });
 
   // Team-wide totals for KPI cards
   const teamTotalBrut = data.reduce((s,d) => s + d.totalBrutPlanifie, 0);
@@ -2382,7 +2658,8 @@ function pageHours() {
 
     ${(state.hoursView || 'cards') === 'cards' ? `
       <div class="pcards">
-        ${data.map(d => {
+        ${data.map((d, idx) => {
+          const isFirstLabo = d.n.pole === 'labo' && (idx === 0 || data[idx-1].n.pole !== 'labo');
           const totalAbs = (d.leaves.absent_justifie||0) + (d.leaves.absent_injustifie||0);
           const totalH = d.normalH + d.supplH25 + d.supplH50;
           const modifs = [];
@@ -2393,6 +2670,7 @@ function pageHours() {
           if (d.n.sansAvantageRepas) modifs.push('Sans repas');
           if (d.n.sansNavigo) modifs.push('Sans Navigo');
           return `
+            ${isFirstLabo ? '<div class="pc-pole-sep">🥖 Labo</div>' : ''}
             <article class="pc">
               <div class="pc-head">
                 <div class="pc-who">
@@ -3289,6 +3567,12 @@ function openContratEditor() {
         </select>
       </div>
       <div class="field"><label class="field-label">Poste</label><input class="input" id="cPoste" value="${esc(n.poste)}"></div>
+      <div class="field"><label class="field-label">Pôle / équipe</label>
+        <select class="input" id="cPole">
+          <option value="resto" ${n.pole!=='labo'?'selected':''}>Équipe restaurant</option>
+          <option value="labo" ${n.pole==='labo'?'selected':''}>Labo</option>
+        </select>
+      </div>
       <div class="field"><label class="field-label">Date de début</label><input class="input" id="cDebut" type="date" value="${esc(n.contratDebut)}"></div>
       <div class="field"><label class="field-label">Date de fin (laisser vide pour CDI)</label><input class="input" id="cFin" type="date" value="${esc(n.contratFin)}"></div>
       <div class="field"><label class="field-label">Période d'essai (jours)</label><input class="input mono" id="cEssai" type="number" value="${n.periodeEssaiJours||60}"></div>
@@ -3310,6 +3594,7 @@ function openContratEditor() {
       ...e,
       contrat: $('#cType').value,
       poste: $('#cPoste').value.trim(),
+      pole: $('#cPole').value,
       contratDebut: $('#cDebut').value,
       contratFin: $('#cFin').value,
       periodeEssaiJours: parseInt($('#cEssai').value) || 60,
