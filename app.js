@@ -14,8 +14,8 @@ const FB_CONFIG = {
   appId: "1:620239670518:web:ec6249a4b8522506b5f0d7"
 };
 
-const ADMIN_USER = 'admin';
-const ADMIN_CODE = '0000';
+const ADMIN_USER = 'rayess';
+const ADMIN_CODE = '541194J';
 
 // Default seed data (matches existing RH_ULTIME.html structure)
 const DEFAULT_EMPLOYEES = [
@@ -284,6 +284,7 @@ const state = {
   duerp: null,       // {updatedAt, docId, dueAt}
   affichages: {},    // key affichage name → {present, photoDocId, updatedAt}
   payslips: {},      // key `${empId}_${yyyy-mm}` → {docId, sentAt, ackBy?}
+  adminCredentials: null, // {username, passwordHash}
   weekStart: getMonday(new Date()),
   fbReady: false,
   page: null,        // current page id
@@ -1004,7 +1005,7 @@ const DOC_CATEGORIES = {
 
 function fbListen() {
   if (!db) return;
-  ['employees','shifts','punches','publications','absenceRequests','emargements','pourboires','duerp','affichages','payslips'].forEach(k => {
+  ['employees','shifts','punches','publications','absenceRequests','emargements','pourboires','duerp','affichages','payslips','adminCredentials'].forEach(k => {
     db.ref(k).on('value', snap => {
       const v = snap.val();
       if (k === 'employees' && v) {
@@ -1032,6 +1033,7 @@ function fbListen() {
       if (k === 'duerp' && v) state.duerp = v;
       if (k === 'affichages' && v) state.affichages = v;
       if (k === 'payslips' && v) state.payslips = v;
+      if (k === 'adminCredentials' && v) state.adminCredentials = v;
       render();
     }, err => {
       console.error('[fb] read error on', k, err);
@@ -1082,7 +1084,28 @@ async function seedIfEmpty() {
 }
 
 // ─────────── AUTH ───────────
-function authAdmin(u, c) {
+// SHA-256 helper for password hashing
+async function sha256(str) {
+  const buf = new TextEncoder().encode(str);
+  const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+  return [...new Uint8Array(hashBuf)].map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+async function authAdmin(u, c) {
+  // 1. Vérifier les credentials stockés dans Firebase
+  const stored = state.adminCredentials;
+  if (stored && stored.username && stored.passwordHash) {
+    if (u === stored.username) {
+      const hash = await sha256(c);
+      if (hash === stored.passwordHash) {
+        state.user = { role: 'admin' };
+        sessionStorage.setItem('mu_user', JSON.stringify(state.user));
+        return true;
+      }
+    }
+    return false;
+  }
+  // 2. Fallback sur les credentials par défaut hardcodés (premier login)
   if (u === ADMIN_USER && c === ADMIN_CODE) {
     state.user = { role: 'admin' };
     sessionStorage.setItem('mu_user', JSON.stringify(state.user));
@@ -1309,17 +1332,18 @@ function bindLogin() {
     loginMode = e.target.dataset.mode;
     render();
   }));
-  $('#loginForm').addEventListener('submit', (e) => {
+  $('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const u = $('#loginUser').value.trim().toLowerCase();
     const c = $('#loginCode').value.trim();
     if (!u || !c) { toast('Renseigne tous les champs', 'error'); return; }
     if (loginMode === 'admin') {
-      if (authAdmin(u, c)) { toast('Bienvenue', 'good'); render(); }
+      const ok = await authAdmin(u, c);
+      if (ok) { toast('Bienvenue', 'good'); render(); }
       else toast('Identifiants invalides', 'error');
     } else {
-      const e = authEmp(u, c);
-      if (e) { toast(`Bonjour ${e.prenom}`, 'good'); render(); }
+      const emp = authEmp(u, c);
+      if (emp) { toast(`Bonjour ${emp.prenom}`, 'good'); render(); }
       else toast('Identifiants invalides', 'error');
     }
   });
@@ -1373,7 +1397,7 @@ function viewAdminShell() {
             <button class="topnav-icon" data-logout title="Déconnexion">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
             </button>
-            <div class="topnav-avatar">A</div>
+            <button class="topnav-avatar" id="openAdminSettings" title="Paramètres admin">A</button>
           </div>
         </div>
         <div class="topnav-mobile">
@@ -1469,6 +1493,8 @@ function bindAdmin() {
     state.empDetail = null;
     render();
   });
+  const settingsBtn = $('#openAdminSettings');
+  if (settingsBtn) settingsBtn.addEventListener('click', () => openAdminSettings());
 
   switch (state.page) {
     case 'dashboard': bindDashboard(); break;
@@ -4911,6 +4937,101 @@ function openDuerpEditor() {
     toast('DUERP mis à jour', 'good');
     close();
     render();
+  });
+}
+
+// ─────────── PARAMÈTRES ADMIN — Identifiant + mot de passe ───────────
+function openAdminSettings() {
+  const current = state.adminCredentials;
+  const usingDefault = !current;
+  const body = `
+    <div class="text-mute" style="font-size:13px;line-height:1.55;margin-bottom:18px;">
+      ${usingDefault
+        ? `<div class="info-banner" style="background:var(--c-warn-bg);border-left:3px solid var(--c-warn-text);padding:12px 14px;border-radius:8px;color:var(--c-warn-dark);font-size:13px;">⚠️ Tu utilises encore les <strong>identifiants par défaut</strong> (<code>${ADMIN_USER}</code> / <code>${ADMIN_CODE}</code>). Change-les immédiatement pour sécuriser ton accès.</div>`
+        : `Identifiant actuel : <strong>${esc(current.username)}</strong> · Dernière modification : ${current.updatedAt ? new Date(current.updatedAt).toLocaleDateString('fr-FR') : '—'}`}
+    </div>
+
+    <div class="modal-section-title">Vérification</div>
+    <div class="form-grid">
+      <div class="field full">
+        <label class="field-label">Mot de passe actuel</label>
+        <input class="input mono" id="asCurrentPwd" type="password" autocomplete="current-password" placeholder="••••">
+      </div>
+    </div>
+
+    <div class="modal-section-title">Nouveaux identifiants</div>
+    <div class="form-grid">
+      <div class="field full">
+        <label class="field-label">Nouvel identifiant</label>
+        <input class="input" id="asNewUser" value="${esc((current?current.username:ADMIN_USER))}" placeholder="ex: jad">
+        <div class="text-mute" style="font-size:11.5px;margin-top:4px;">Sera mis en minuscules automatiquement</div>
+      </div>
+      <div class="field">
+        <label class="field-label">Nouveau mot de passe</label>
+        <input class="input mono" id="asNewPwd" type="password" autocomplete="new-password" placeholder="min 4 caractères">
+      </div>
+      <div class="field">
+        <label class="field-label">Confirmer le mot de passe</label>
+        <input class="input mono" id="asNewPwd2" type="password" autocomplete="new-password" placeholder="••••">
+      </div>
+    </div>
+
+    <div class="info-banner" style="background:var(--c-paper);border:1px solid var(--c-line);padding:12px 14px;border-radius:8px;font-size:12.5px;color:var(--c-ink-3);line-height:1.55;margin-top:14px;">
+      🔒 Le mot de passe est stocké sous forme de <strong>hash SHA-256</strong> dans Firebase, jamais en clair. Note-le quelque part : si tu l'oublies, la seule façon de le réinitialiser sera de supprimer manuellement le node <code>adminCredentials</code> dans la console Firebase (retour aux identifiants par défaut).
+    </div>
+  `;
+  const footer = `
+    <button class="btn-sec" data-close>Annuler</button>
+    <button class="btn-pri" id="asSave" style="width:auto;">Enregistrer</button>
+  `;
+  const { close } = openModal({ title: 'Paramètres administrateur', body, footer });
+
+  $('#asSave').addEventListener('click', async () => {
+    const currentPwd = $('#asCurrentPwd').value.trim();
+    const newUser = $('#asNewUser').value.trim().toLowerCase();
+    const newPwd = $('#asNewPwd').value.trim();
+    const newPwd2 = $('#asNewPwd2').value.trim();
+
+    if (!currentPwd) { toast('Saisis le mot de passe actuel', 'error'); return; }
+    if (!newUser) { toast('Identifiant requis', 'error'); return; }
+    if (!newPwd) { toast('Nouveau mot de passe requis', 'error'); return; }
+    if (newPwd.length < 4) { toast('Mot de passe trop court (min 4 caractères)', 'error'); return; }
+    if (newPwd !== newPwd2) { toast('Les deux mots de passe ne correspondent pas', 'error'); return; }
+
+    // Vérifier le mot de passe actuel
+    let currentOk = false;
+    if (current && current.passwordHash) {
+      const hashCurrent = await sha256(currentPwd);
+      currentOk = hashCurrent === current.passwordHash;
+    } else {
+      currentOk = currentPwd === ADMIN_CODE;
+    }
+    if (!currentOk) {
+      toast('Mot de passe actuel incorrect', 'error');
+      return;
+    }
+
+    // Hasher et sauvegarder
+    const newHash = await sha256(newPwd);
+    const updated = {
+      username: newUser,
+      passwordHash: newHash,
+      updatedAt: new Date().toISOString(),
+    };
+    state.adminCredentials = updated;
+    if (db) {
+      try {
+        await db.ref('adminCredentials').set(updated);
+        toast(`Identifiants mis à jour. Reconnecte-toi avec "${newUser}".`, 'good', 5000);
+        close();
+        // Force logout pour utiliser les nouveaux credentials
+        setTimeout(() => logout(), 1500);
+      } catch (e) {
+        toast('Erreur sauvegarde Firebase : ' + (e.message||e.code), 'error', 6000);
+      }
+    } else {
+      toast('Firebase non disponible — changement non persistant', 'error');
+    }
   });
 }
 
