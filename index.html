@@ -686,176 +686,154 @@ a { color: inherit; text-decoration: none; }
   opacity: 0.85;
 }
 
-/* ─── PAIE CARDS — épuré, fond crème, texte coloré ─── */
-.pcards { display: flex; flex-direction: column; gap: 12px; }
+/* ─── PAIE CARDS — épuré, une seule carte, séparateurs fins ─── */
+.pcards { display: flex; flex-direction: column; gap: 14px; }
 
-.pcard {
+.pc {
   background: var(--c-surface);
   border: 1px solid var(--c-line);
   border-radius: 16px;
-  padding: 20px;
   transition: box-shadow .15s;
+  overflow: hidden;
 }
-.pcard:hover { box-shadow: 0 6px 22px -14px rgba(40,30,20,.14); }
+.pc:hover { box-shadow: 0 6px 22px -14px rgba(40,30,20,.14); }
 
-.pcard-top {
+/* Sections — separated by hairlines, no inner boxes */
+.pc-head, .pc-stats, .pc-info, .pc-weeks { padding: 18px 22px; }
+.pc-stats, .pc-info, .pc-weeks { border-top: 1px solid var(--c-line-2); }
+
+.pc-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
 }
-.pcard-id { display: flex; align-items: center; gap: 12px; }
-.pcard-id .av-emp.sm { width: 34px; height: 34px; font-size: 11.5px; }
-.pcard-name {
+.pc-who { display: flex; align-items: center; gap: 12px; }
+.pc-who .av-emp.sm { width: 34px; height: 34px; font-size: 11.5px; }
+.pc-name {
   font-size: 16px;
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.2;
   color: var(--c-ink);
 }
-.pcard-meta {
+.pc-sub {
   font-size: 11.5px;
   color: var(--c-ink-4);
   margin-top: 3px;
 }
-.pcard-top .btn-ghost { font-size: 11.5px; padding: 5px 10px; flex-shrink: 0; }
+.pc-head .btn-ghost { font-size: 11.5px; padding: 5px 10px; flex-shrink: 0; }
 
-/* Tiles — uniform cream, only the number is colored */
-.ptiles {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 8px;
+/* Stats — bare numbers in a row, no boxes */
+.pc-stats {
+  display: flex;
+  gap: 14px;
 }
-@media (max-width: 900px) { .ptiles { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width: 540px) { .ptiles { grid-template-columns: repeat(2, 1fr); } }
-
-.ptile {
-  padding: 13px 14px;
-  border-radius: 12px;
-  background: var(--c-paper);
-}
-.ptile-key { box-shadow: inset 0 0 0 1.5px #cfe6d6; }
-.ptile-num {
-  font-size: 23px;
+.pc-stat { flex: 1; min-width: 0; }
+.pc-stat-key { position: relative; }
+.pc-stat-n {
+  font-size: 25px;
   font-weight: 700;
   letter-spacing: -0.035em;
   line-height: 1;
   color: var(--c-ink);
   display: flex;
   align-items: baseline;
-  gap: 4px;
+  gap: 3px;
   flex-wrap: wrap;
 }
-.ptile-num small {
+.pc-stat-n span {
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0;
   color: var(--c-ink-5);
 }
-.ptile-lbl {
+.pc-stat-l {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  margin-top: 7px;
   color: var(--c-ink-4);
+  margin-top: 8px;
 }
 
-/* Text color classes */
-.c-amber  { color: #b45309 !important; }
-.c-red    { color: #b91c1c !important; }
-.c-green  { color: #15803d !important; }
-.c-mute   { color: var(--c-ink-5) !important; }
+/* Text colors */
+.c-amber { color: #b45309 !important; }
+.c-red   { color: #b91c1c !important; }
+.c-green { color: #15803d !important; }
+.c-mute  { color: var(--c-ink-5) !important; }
 
-/* Secondary info row */
-.pcard-info {
+/* Info — bare inline text */
+.pc-info {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
-  margin-top: 14px;
-}
-.pinfo {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: var(--r-pill);
-  font-size: 11px;
-  font-weight: 500;
+  gap: 8px 22px;
+  font-size: 12px;
   color: var(--c-ink-4);
-  background: var(--c-paper);
 }
-.pinfo b {
+.pc-info b {
   font-weight: 700;
-  font-size: 11.5px;
   color: var(--c-ink);
+  margin-left: 5px;
 }
-.pinfo-in {
-  padding: 3px 10px 3px 12px;
-}
-.pinfo-in input {
-  width: 48px;
+.pc-tip { display: inline-flex; align-items: center; }
+.pc-tip input {
+  width: 46px;
   border: none;
-  background: var(--c-surface);
-  border-radius: 5px;
-  font-size: 11.5px;
+  border-bottom: 1.5px solid var(--c-line);
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
   font-weight: 700;
   text-align: right;
   color: var(--c-ink);
-  padding: 4px 5px;
+  margin: 0 4px;
+  padding: 2px 3px;
 }
-.pinfo-in input:focus { outline: 1.5px solid #cfe6d6; }
-.pinfo-in i { font-style: normal; font-size: 10.5px; color: var(--c-ink-4); }
+.pc-tip input:focus { outline: none; border-bottom-color: #15803d; }
 
-/* 8 weeks row — cream cells, colored numbers */
-.pcard-weeks { margin-top: 16px; }
-.pweeks-lbl {
+/* 8 weeks — bare numbers, no cells */
+.pc-weeks-l {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--c-ink-5);
-  display: block;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
-.pweeks-row { display: flex; gap: 6px; }
-.pweek {
+.pc-weeks-row { display: flex; gap: 6px; }
+.pc-wk {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  padding: 10px 2px;
-  border-radius: 10px;
-  background: var(--c-paper);
+  text-align: center;
+  min-width: 0;
 }
-.pweek b {
-  font-size: 15px;
+.pc-wk-n {
+  font-size: 16px;
   font-weight: 700;
   letter-spacing: -0.03em;
   color: var(--c-ink);
 }
-.pweek b.ok    { color: #15803d; }
-.pweek b.over  { color: #b45309; }
-.pweek b.under { color: #b91c1c; }
-.pweek b.empty { color: var(--c-ink-5); }
-.pweek em {
-  font-style: normal;
-  font-size: 9px;
+.pc-wk-n.ok    { color: #15803d; }
+.pc-wk-n.over  { color: #b45309; }
+.pc-wk-n.under { color: #b91c1c; }
+.pc-wk-n.empty { color: var(--c-ink-5); }
+.pc-wk-d {
+  font-size: 9.5px;
   font-weight: 500;
   color: var(--c-ink-5);
+  margin-top: 4px;
 }
 
-/* Total équipe card */
-.pcard-total { background: var(--c-paper); }
-.pcard-total .ptile { background: var(--c-surface); }
-.pcard-total .pcard-name { color: var(--c-ink-3); }
+/* Total card */
+.pc-total { background: var(--c-paper); }
+.pc-total .pc-name { color: var(--c-ink-3); }
 
 @media (max-width: 700px) {
-  .pcard { padding: 16px; }
-  .pweeks-row { flex-wrap: wrap; }
-  .pweek { min-width: 58px; flex: 0 1 auto; }
+  .pc-head, .pc-stats, .pc-info, .pc-weeks { padding: 16px; }
+  .pc-stats { flex-wrap: wrap; gap: 18px 14px; }
+  .pc-stat { flex: 0 0 28%; }
+  .pc-weeks-row { flex-wrap: wrap; }
+  .pc-wk { flex: 0 0 20%; }
 }
 
 /* Modalités de paie editor */
