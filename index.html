@@ -686,272 +686,187 @@ a { color: inherit; text-decoration: none; }
   opacity: 0.85;
 }
 
-/* ─── PAIE CARDS — Combo-style fluide ─── */
-.paie-cards {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-.paie-card {
+/* ─── PAIE CARDS — version compacte ─── */
+.pcards { display: flex; flex-direction: column; gap: 10px; }
+
+.pcard {
   background: var(--c-surface);
   border: 1px solid var(--c-line);
-  border-radius: var(--r-lg);
-  padding: 22px 26px;
-  transition: border-color .15s, box-shadow .2s, transform .15s;
+  border-radius: var(--r);
+  padding: 16px 18px;
+  transition: border-color .15s, box-shadow .15s;
 }
-.paie-card:hover {
-  border-color: var(--c-ink-5);
-  box-shadow: 0 6px 24px -10px rgba(40,30,20,.1);
-}
-.paie-card-head {
+.pcard:hover { border-color: var(--c-ink-5); box-shadow: 0 4px 16px -8px rgba(40,30,20,.1); }
+
+.pcard-top {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 22px;
   gap: 12px;
+  margin-bottom: 14px;
 }
-.paie-card-head .with-av { gap: 16px; }
-.paie-card-head .av-emp {
-  width: 44px; height: 44px;
-  font-size: 15px;
-  background: var(--c-paper);
-}
-.paie-card-name {
+.pcard-id { display: flex; align-items: center; gap: 11px; }
+.pcard-id .av-emp.sm { width: 32px; height: 32px; font-size: 11px; }
+.pcard-name {
   font-family: var(--f-display);
-  font-size: 22px;
+  font-size: 17px;
   font-weight: 500;
-  letter-spacing: -0.018em;
-  line-height: 1.1;
-  color: var(--c-ink);
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
 }
-.paie-card-sub {
-  font-size: 12.5px;
-  color: var(--c-ink-4);
-  margin-top: 4px;
+.pcard-modif {
+  font-family: var(--f-body);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  background: var(--c-ink);
+  color: #fff;
 }
+.pcard-meta { font-size: 11.5px; color: var(--c-ink-4); margin-top: 2px; }
+.pcard-top .btn-ghost { font-size: 11.5px; padding: 5px 9px; flex-shrink: 0; }
 
-/* Grid of main stats */
-.paie-stats {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 12px;
-  padding-bottom: 18px;
-  border-bottom: 1px dashed var(--c-line);
-  margin-bottom: 16px;
-}
-@media (max-width: 1100px) { .paie-stats { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width: 600px) { .paie-stats { grid-template-columns: repeat(2, 1fr); } }
-
-.paie-stat {
+/* Stats strip */
+.pcard-stats {
+  display: flex;
+  align-items: center;
+  gap: 22px;
   padding: 12px 14px;
   background: var(--c-paper);
-  border-radius: 12px;
-  transition: background .15s;
-}
-.paie-stat:hover { background: var(--c-line-2); }
-.paie-stat.highlight {
-  background: var(--c-ink);
-  color: #fff;
-}
-.paie-stat.highlight .paie-stat-label,
-.paie-stat.highlight .paie-stat-meta { color: rgba(255,255,255,.65); }
-.paie-stat.highlight-money {
-  background: var(--c-accent);
-  color: var(--c-accent-deep);
-}
-.paie-stat.highlight-money .paie-stat-label,
-.paie-stat.highlight-money .paie-stat-meta { color: var(--c-accent-dark); }
-.paie-stat.highlight-warn {
-  background: var(--c-warn);
-  color: var(--c-warn-dark);
-}
-.paie-stat.highlight-warn .paie-stat-label,
-.paie-stat.highlight-warn .paie-stat-meta { color: var(--c-warn-dark); opacity: 0.75; }
-.paie-stat.highlight-alert {
-  background: var(--c-alert);
-  color: var(--c-alert-dark);
-}
-.paie-stat.highlight-alert .paie-stat-label,
-.paie-stat.highlight-alert .paie-stat-meta { color: var(--c-alert-dark); opacity: 0.75; }
-
-.paie-stat-label {
-  font-size: 10.5px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--c-ink-4);
-  margin-bottom: 6px;
-}
-.paie-stat-value {
-  font-family: var(--f-display);
-  font-size: 28px;
-  font-weight: 400;
-  letter-spacing: -0.025em;
-  line-height: 1;
-  color: inherit;
-}
-.paie-stat-unit {
-  font-family: var(--f-body);
-  font-size: 13px;
-  font-weight: 500;
-  margin-left: 3px;
-  opacity: 0.7;
-}
-.paie-stat-meta {
-  font-size: 10.5px;
-  color: var(--c-ink-5);
-  margin-top: 4px;
-  letter-spacing: -0.005em;
-}
-
-/* Secondary pills row */
-.paie-secondary {
-  display: flex;
+  border-radius: 10px;
   flex-wrap: wrap;
-  gap: 8px;
 }
-.paie-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 13px;
-  background: var(--c-paper);
-  border-radius: var(--r-pill);
-  font-size: 12px;
-  color: var(--c-ink-3);
-  transition: background .15s;
-}
-.paie-pill:hover { background: var(--c-line-2); }
-.paie-pill.warn { background: var(--c-warn); color: var(--c-warn-dark); }
-.paie-pill.alert { background: var(--c-alert); color: var(--c-alert-dark); }
-.paie-pill.accent { background: var(--c-accent); color: var(--c-accent-deep); }
-.paie-pill-label {
-  font-weight: 500;
-  letter-spacing: 0.01em;
-}
-.paie-pill-value {
-  font-family: var(--f-mono);
-  font-weight: 500;
-  font-size: 12.5px;
-  letter-spacing: -0.01em;
-  color: var(--c-ink);
-}
-.paie-pill.warn .paie-pill-value { color: var(--c-warn-dark); }
-.paie-pill.alert .paie-pill-value { color: var(--c-alert-dark); }
-.paie-pill.accent .paie-pill-value { color: var(--c-accent-deep); }
-
-.paie-pill-input {
-  padding: 4px 4px 4px 13px;
-  background: var(--c-surface);
-  border: 1px solid var(--c-line);
-}
-.paie-pill-input:hover { background: var(--c-surface); border-color: var(--c-ink-5); }
-.paie-pill-input input {
-  width: 70px;
-  border: none;
-  background: transparent;
-  font-family: var(--f-mono);
-  font-size: 12.5px;
-  font-weight: 500;
-  text-align: right;
-  padding: 4px 4px;
-  color: var(--c-ink);
-}
-.paie-pill-input input:focus { outline: 1px solid var(--c-ink-5); border-radius: 4px; }
-.paie-pill-unit { font-size: 11.5px; color: var(--c-ink-4); padding-right: 10px; }
-
-/* Team total card */
-.paie-total-card {
-  background: linear-gradient(135deg, #faf8f3 0%, #f5f2ea 100%);
-  border: 1px solid var(--c-line);
-  border-style: dashed;
-  margin-top: 6px;
-}
-.paie-total-card .paie-stats { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
-.paie-total-card .paie-card-name { font-style: italic; color: var(--c-ink-3); }
-
-/* Modifier tags on card */
-.paie-modifs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 16px;
-  margin-top: -6px;
-}
-.paie-modif-tag {
-  font-size: 10.5px;
-  font-weight: 500;
-  padding: 3px 9px;
-  border-radius: var(--r-pill);
-  background: var(--c-ink);
-  color: #fff;
-  letter-spacing: 0.01em;
-}
-
-/* Heures 8 semaines — affichage texte coloré */
-.paie-weeks {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px dashed var(--c-line);
-}
-.paie-weeks-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 10px;
-}
-.paie-weeks-title {
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
+.pstat { display: flex; flex-direction: column; gap: 3px; }
+.pstat-k {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--c-ink-4);
 }
-.paie-weeks-legend {
-  font-size: 10.5px;
-  color: var(--c-ink-5);
-  font-family: var(--f-mono);
-}
-.paie-weeks-grid {
-  display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  gap: 6px;
-}
-@media (max-width: 700px) { .paie-weeks-grid { grid-template-columns: repeat(4, 1fr); } }
-.paie-week-cell {
-  text-align: center;
-  padding: 8px 4px;
-  border-radius: 9px;
-  background: var(--c-paper);
-}
-.paie-week-hours {
+.pstat-v {
   font-family: var(--f-display);
   font-size: 19px;
   font-weight: 400;
   letter-spacing: -0.02em;
   line-height: 1;
+  color: var(--c-ink);
+}
+.pstat-v i {
+  font-family: var(--f-body);
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 500;
+  opacity: 0.55;
+  margin-left: 2px;
+}
+.pstat-v.c-warn { color: var(--c-warn-dark); }
+.pstat-v.c-alert { color: var(--c-alert-dark); }
+.pstat-div { width: 1px; align-self: stretch; background: var(--c-line); }
+.pstat-hl .pstat-v { font-size: 22px; }
+.pstat-money .pstat-v { font-size: 22px; color: var(--c-accent-dark); }
+.pstat-money .pstat-k { color: var(--c-accent-dark); }
+
+/* Pills row */
+.pcard-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.ppill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  color: var(--c-ink-4);
+  background: var(--c-paper);
+}
+.ppill b {
+  font-family: var(--f-mono);
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--c-ink);
+}
+.ppill.warn { background: var(--c-warn); color: var(--c-warn-dark); }
+.ppill.warn b { color: var(--c-warn-dark); }
+.ppill.alert { background: var(--c-alert); color: var(--c-alert-dark); }
+.ppill.alert b { color: var(--c-alert-dark); }
+.ppill.accent { background: var(--c-accent); color: var(--c-accent-deep); }
+.ppill.accent b { color: var(--c-accent-deep); }
+.ppill-in {
+  background: var(--c-surface);
+  border: 1px solid var(--c-line);
+  padding: 3px 8px 3px 10px;
+}
+.ppill-in input {
+  width: 54px;
+  border: none;
+  background: transparent;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: right;
+  color: var(--c-ink);
+  padding: 2px;
+}
+.ppill-in input:focus { outline: 1px solid var(--c-ink-5); border-radius: 3px; }
+.ppill-in i { font-style: normal; font-size: 10px; color: var(--c-ink-4); }
+
+/* 8 weeks compact row */
+.pcard-weeks { margin-top: 12px; }
+.pcard-weeks-lbl {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--c-ink-5);
+  display: block;
+  margin-bottom: 6px;
+}
+.pweeks-row { display: flex; gap: 5px; }
+.pweek {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 2px;
+  border-radius: 7px;
+  background: var(--c-paper);
+  font-family: var(--f-mono);
+  font-size: 12px;
+  font-weight: 600;
   color: var(--c-ink-3);
 }
-.paie-week-hours span {
-  font-family: var(--f-body);
-  font-size: 10px;
-  font-weight: 500;
-  opacity: 0.6;
-  margin-left: 1px;
-}
-.paie-week-date {
-  font-size: 9px;
-  font-family: var(--f-mono);
+.pweek em {
+  font-style: normal;
+  font-size: 8px;
+  font-weight: 400;
   color: var(--c-ink-5);
-  margin-top: 4px;
 }
-.paie-week-cell.ok    { background: var(--c-good); }
-.paie-week-cell.ok    .paie-week-hours { color: var(--c-good-dark); }
-.paie-week-cell.over  { background: var(--c-warn); }
-.paie-week-cell.over  .paie-week-hours { color: var(--c-warn-dark); }
-.paie-week-cell.under { background: var(--c-alert); }
-.paie-week-cell.under .paie-week-hours { color: var(--c-alert-dark); }
-.paie-week-cell.empty .paie-week-hours { color: var(--c-ink-5); }
+.pweek.ok    { background: var(--c-good); color: var(--c-good-dark); }
+.pweek.over  { background: var(--c-warn); color: var(--c-warn-dark); }
+.pweek.under { background: var(--c-alert); color: var(--c-alert-dark); }
+.pweek.empty { color: var(--c-ink-5); }
+.pweek.ok em, .pweek.over em, .pweek.under em { opacity: 0.7; color: inherit; }
+
+/* Total card */
+.pcard-total {
+  background: linear-gradient(135deg, #faf8f3 0%, #f3f0e8 100%);
+  border-style: dashed;
+}
+.pcard-total .pcard-name { font-style: italic; color: var(--c-ink-3); font-size: 16px; }
+
+@media (max-width: 700px) {
+  .pcard-stats { gap: 14px; }
+  .pweeks-row { flex-wrap: wrap; }
+  .pweek { min-width: 56px; flex: 0 1 auto; }
+}
 
 /* Modalités de paie editor */
 .modalite-row {

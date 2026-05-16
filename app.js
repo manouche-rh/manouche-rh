@@ -2381,13 +2381,10 @@ function pageHours() {
     </div>
 
     ${(state.hoursView || 'cards') === 'cards' ? `
-      <div class="paie-cards">
+      <div class="pcards">
         ${data.map(d => {
-          const contractMonthly = ((d.n.heures||35) * 52 / 12).toFixed(1);
           const totalAbs = (d.leaves.absent_justifie||0) + (d.leaves.absent_injustifie||0);
           const totalH = d.normalH + d.supplH25 + d.supplH50;
-          const totalBrut = d.totalBrutPlanifie + (d.pourboires||0) + d.valeurRepas + d.navigoMensuel;
-          // Modifier badges
           const modifs = [];
           if (d.n.sansHeuresSupp) modifs.push('Sans heures sup');
           if (d.n.payeNet) modifs.push('Payé net');
@@ -2396,98 +2393,63 @@ function pageHours() {
           if (d.n.sansAvantageRepas) modifs.push('Sans repas');
           if (d.n.sansNavigo) modifs.push('Sans Navigo');
           return `
-            <article class="paie-card">
-              <header class="paie-card-head">
-                <div class="with-av">
-                  <div class="av-emp">${initials(d.emp)}</div>
-                  <div class="stack">
-                    <div class="paie-card-name">${esc(d.emp.prenom)} ${esc(d.emp.nom)}</div>
-                    <div class="paie-card-sub">${esc(d.emp.poste||'—')} · ${esc(d.emp.contrat||'—')} ${d.n.heures||0}h · ${d.n.taux ? d.n.taux.toFixed(2) : '—'} €/h${d.n.payeNet ? ' net' : ''}</div>
+            <article class="pcard">
+              <header class="pcard-top">
+                <div class="pcard-id">
+                  <div class="av-emp sm">${initials(d.emp)}</div>
+                  <div>
+                    <div class="pcard-name">${esc(d.emp.prenom)} ${esc(d.emp.nom)}${modifs.length ? modifs.map(m => `<span class="pcard-modif">${esc(m)}</span>`).join('') : ''}</div>
+                    <div class="pcard-meta">${esc(d.emp.poste||'—')} · ${esc(d.emp.contrat||'—')} ${d.n.heures||0}h · ${d.n.taux ? d.n.taux.toFixed(2) : '—'}€/h${d.n.payeNet ? ' net' : ''}</div>
                   </div>
                 </div>
                 <button class="btn-ghost" data-detail-emp="${d.emp.id}" title="Voir la fiche">Fiche →</button>
               </header>
 
-              ${modifs.length ? `<div class="paie-modifs">${modifs.map(m => `<span class="paie-modif-tag">${esc(m)}</span>`).join('')}</div>` : ''}
-
-              <div class="paie-stats">
-                <div class="paie-stat">
-                  <div class="paie-stat-label">Heures normales</div>
-                  <div class="paie-stat-value">${d.normalH.toFixed(1)}<span class="paie-stat-unit">h</span></div>
-                  <div class="paie-stat-meta">contrat ${contractMonthly} h</div>
+              <div class="pcard-stats">
+                <div class="pstat">
+                  <span class="pstat-k">Normales</span>
+                  <span class="pstat-v">${d.normalH.toFixed(1)}<i>h</i></span>
                 </div>
-                <div class="paie-stat ${d.supplH25 > 0 ? 'highlight-warn' : ''}">
-                  <div class="paie-stat-label">Sup. +25%</div>
-                  <div class="paie-stat-value">${d.supplH25.toFixed(1)}<span class="paie-stat-unit">h</span></div>
-                  <div class="paie-stat-meta">36→43h/sem</div>
+                <div class="pstat">
+                  <span class="pstat-k">Sup +25%</span>
+                  <span class="pstat-v ${d.supplH25>0?'c-warn':''}">${d.supplH25.toFixed(1)}<i>h</i></span>
                 </div>
-                <div class="paie-stat ${d.supplH50 > 0 ? 'highlight-alert' : ''}">
-                  <div class="paie-stat-label">Sup. +50%</div>
-                  <div class="paie-stat-value">${d.supplH50.toFixed(1)}<span class="paie-stat-unit">h</span></div>
-                  <div class="paie-stat-meta">au-delà 43h/sem</div>
+                <div class="pstat">
+                  <span class="pstat-k">Sup +50%</span>
+                  <span class="pstat-v ${d.supplH50>0?'c-alert':''}">${d.supplH50.toFixed(1)}<i>h</i></span>
                 </div>
-                <div class="paie-stat highlight">
-                  <div class="paie-stat-label">Total heures</div>
-                  <div class="paie-stat-value">${totalH.toFixed(1)}<span class="paie-stat-unit">h</span></div>
-                  <div class="paie-stat-meta">${d.workedDays} jours travaillés</div>
+                <div class="pstat-div"></div>
+                <div class="pstat pstat-hl">
+                  <span class="pstat-k">Total</span>
+                  <span class="pstat-v">${totalH.toFixed(1)}<i>h</i></span>
                 </div>
-                <div class="paie-stat highlight-money">
-                  <div class="paie-stat-label">Brut estimé</div>
-                  <div class="paie-stat-value">${d.totalBrutPlanifie.toFixed(0)}<span class="paie-stat-unit">€</span></div>
-                  <div class="paie-stat-meta">${d.totalBrutPlanifie.toFixed(2)} €</div>
+                <div class="pstat pstat-money">
+                  <span class="pstat-k">Brut estimé</span>
+                  <span class="pstat-v">${Math.round(d.totalBrutPlanifie).toLocaleString('fr-FR')}<i>€</i></span>
                 </div>
-                <div class="paie-stat">
-                  <div class="paie-stat-label">Avantage repas</div>
-                  <div class="paie-stat-value">${d.repas}<span class="paie-stat-unit">×</span></div>
-                  <div class="paie-stat-meta">${d.valeurRepas.toFixed(2)} € · ${REPAS_HCR_VALEUR}€/repas</div>
+                <div class="pstat">
+                  <span class="pstat-k">Repas</span>
+                  <span class="pstat-v">${d.repas}<i>· ${d.valeurRepas.toFixed(0)}€</i></span>
                 </div>
               </div>
 
-              <div class="paie-secondary">
-                <div class="paie-pill ${d.coupures > 0 ? 'warn' : ''}" title="Temps de coupure entre 2 services (non payé)">
-                  <span class="paie-pill-label">Coupures</span>
-                  <span class="paie-pill-value">${d.coupures > 0 ? d.coupures.toFixed(1)+'h' : '0h'}</span>
-                </div>
-                <div class="paie-pill" title="Pass Navigo mensuel">
-                  <span class="paie-pill-label">Navigo</span>
-                  <span class="paie-pill-value">${d.navigoMensuel ? d.navigoMensuel.toFixed(2)+'€' : '—'}</span>
-                </div>
-                <div class="paie-pill" title="Congés payés ce mois">
-                  <span class="paie-pill-label">CP</span>
-                  <span class="paie-pill-value">${d.leaves.cp || '0'} j</span>
-                </div>
-                <div class="paie-pill ${d.leaves.arret_maladie > 0 ? 'warn' : ''}" title="Arrêts maladie">
-                  <span class="paie-pill-label">Arrêt mal.</span>
-                  <span class="paie-pill-value">${d.leaves.arret_maladie || '0'} j</span>
-                </div>
-                <div class="paie-pill ${totalAbs > 0 ? 'alert' : ''}" title="Absences justifiées + injustifiées">
-                  <span class="paie-pill-label">Absences</span>
-                  <span class="paie-pill-value">${totalAbs || '0'} j</span>
-                </div>
-                <div class="paie-pill ${d.ferieWorked > 0 ? 'accent' : ''}" title="Jours fériés travaillés">
-                  <span class="paie-pill-label">Fériés trav.</span>
-                  <span class="paie-pill-value">${d.ferieWorked || '0'} j</span>
-                </div>
-                <div class="paie-pill paie-pill-input" title="Pourboires (manuel)">
-                  <span class="paie-pill-label">Pourboires</span>
-                  <input type="number" data-tip="${d.emp.id}" value="${d.pourboires||''}" placeholder="0.00" step="0.01">
-                  <span class="paie-pill-unit">€</span>
-                </div>
+              <div class="pcard-pills">
+                <span class="ppill ${d.coupures>0?'warn':''}">Coupures <b>${d.coupures>0?d.coupures.toFixed(1)+'h':'0h'}</b></span>
+                <span class="ppill">Navigo <b>${d.navigoMensuel?d.navigoMensuel.toFixed(0)+'€':'—'}</b></span>
+                <span class="ppill">CP <b>${d.leaves.cp||'0'}j</b></span>
+                <span class="ppill ${d.leaves.arret_maladie>0?'warn':''}">Arrêt mal. <b>${d.leaves.arret_maladie||'0'}j</b></span>
+                <span class="ppill ${totalAbs>0?'alert':''}">Absences <b>${totalAbs||'0'}j</b></span>
+                <span class="ppill ${d.ferieWorked>0?'accent':''}">Fériés <b>${d.ferieWorked||'0'}j</b></span>
+                <span class="ppill ppill-in">Pourboires <input type="number" data-tip="${d.emp.id}" value="${d.pourboires||''}" placeholder="0" step="0.01"><i>€</i></span>
               </div>
 
-              <div class="paie-weeks">
-                <div class="paie-weeks-head">
-                  <span class="paie-weeks-title">Heures planifiées · 8 dernières semaines</span>
-                  <span class="paie-weeks-legend">contrat ${d.n.heures||35}h/sem</span>
-                </div>
-                <div class="paie-weeks-grid">
+              <div class="pcard-weeks">
+                <span class="pcard-weeks-lbl">8 dern. semaines · contrat ${d.n.heures||35}h</span>
+                <div class="pweeks-row">
                   ${d.sparkWeeks.map(w => {
                     const gap = w.hours - (d.n.heures||35);
                     const cls = w.hours === 0 ? 'empty' : Math.abs(gap) < 1 ? 'ok' : gap > 0 ? 'over' : 'under';
-                    return `<div class="paie-week-cell ${cls}">
-                      <div class="paie-week-hours">${w.hours > 0 ? w.hours.toFixed(1) : '0'}<span>h</span></div>
-                      <div class="paie-week-date">${pad(w.date.getDate())}/${pad(w.date.getMonth()+1)}</div>
-                    </div>`;
+                    return `<span class="pweek ${cls}" title="Semaine du ${w.date.toLocaleDateString('fr-FR')}">${w.hours>0?w.hours.toFixed(1):'0'}<em>${pad(w.date.getDate())}/${pad(w.date.getMonth()+1)}</em></span>`;
                   }).join('')}
                 </div>
               </div>
@@ -2496,38 +2458,23 @@ function pageHours() {
         }).join('')}
 
         ${data.length > 0 ? `
-          <article class="paie-card paie-total-card">
-            <header class="paie-card-head">
-              <div class="stack">
-                <div class="paie-card-name" style="font-style:italic;">Total équipe</div>
-                <div class="paie-card-sub">${data.length} salariés · ${MONTHS_FR[month]} ${year}</div>
+          <article class="pcard pcard-total">
+            <header class="pcard-top">
+              <div class="pcard-id">
+                <div>
+                  <div class="pcard-name">Total équipe</div>
+                  <div class="pcard-meta">${data.length} salariés · ${MONTHS_FR[month]} ${year}</div>
+                </div>
               </div>
             </header>
-            <div class="paie-stats">
-              <div class="paie-stat">
-                <div class="paie-stat-label">Heures totales</div>
-                <div class="paie-stat-value">${teamTotalH.toFixed(0)}<span class="paie-stat-unit">h</span></div>
-              </div>
-              <div class="paie-stat highlight-warn">
-                <div class="paie-stat-label">Heures sup.</div>
-                <div class="paie-stat-value">${teamSuppH.toFixed(1)}<span class="paie-stat-unit">h</span></div>
-              </div>
-              <div class="paie-stat highlight-money">
-                <div class="paie-stat-label">Masse brute</div>
-                <div class="paie-stat-value">${Math.round(teamTotalBrut).toLocaleString('fr-FR')}<span class="paie-stat-unit">€</span></div>
-              </div>
-              <div class="paie-stat">
-                <div class="paie-stat-label">Repas</div>
-                <div class="paie-stat-value">${data.reduce((s,d) => s + d.valeurRepas, 0).toFixed(0)}<span class="paie-stat-unit">€</span></div>
-              </div>
-              <div class="paie-stat">
-                <div class="paie-stat-label">Pourboires</div>
-                <div class="paie-stat-value">${data.reduce((s,d) => s + (d.pourboires||0), 0).toFixed(0)}<span class="paie-stat-unit">€</span></div>
-              </div>
-              <div class="paie-stat">
-                <div class="paie-stat-label">Navigo</div>
-                <div class="paie-stat-value">${data.reduce((s,d) => s + (d.navigoMensuel||0), 0).toFixed(0)}<span class="paie-stat-unit">€</span></div>
-              </div>
+            <div class="pcard-stats">
+              <div class="pstat"><span class="pstat-k">Heures totales</span><span class="pstat-v">${teamTotalH.toFixed(0)}<i>h</i></span></div>
+              <div class="pstat"><span class="pstat-k">Heures sup.</span><span class="pstat-v ${teamSuppH>0?'c-warn':''}">${teamSuppH.toFixed(1)}<i>h</i></span></div>
+              <div class="pstat-div"></div>
+              <div class="pstat pstat-money"><span class="pstat-k">Masse brute</span><span class="pstat-v">${Math.round(teamTotalBrut).toLocaleString('fr-FR')}<i>€</i></span></div>
+              <div class="pstat"><span class="pstat-k">Repas</span><span class="pstat-v">${data.reduce((s,d)=>s+d.valeurRepas,0).toFixed(0)}<i>€</i></span></div>
+              <div class="pstat"><span class="pstat-k">Pourboires</span><span class="pstat-v">${data.reduce((s,d)=>s+(d.pourboires||0),0).toFixed(0)}<i>€</i></span></div>
+              <div class="pstat"><span class="pstat-k">Navigo</span><span class="pstat-v">${data.reduce((s,d)=>s+(d.navigoMensuel||0),0).toFixed(0)}<i>€</i></span></div>
             </div>
           </article>
         ` : ''}
