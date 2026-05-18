@@ -1733,6 +1733,7 @@ function pagePlanning() {
       <button class="btn-sec" id="dupToNext" ${weekShiftCount > 0 ? '' : 'disabled style="opacity:.4;"'}>⇉ Dupliquer sur les prochaines semaines</button>
       <button class="btn-sec" id="clearWeek" ${weekShiftCount > 0 ? '' : 'disabled style="opacity:.4;"'}>🗑 Vider la semaine</button>
       <button class="btn-sec" id="openBrouillon">📝 Brouillon</button>
+      <button class="btn-sec" id="initLabo">🥖 Initialiser le labo 2026</button>
       <button class="btn-sec" id="exportCsv" ${weekShiftCount > 0 ? '' : 'disabled style="opacity:.4;"'}>↓ CSV</button>
       <button class="btn-sec" id="exportPdf" ${weekShiftCount > 0 ? '' : 'disabled style="opacity:.4;"'}>↓ PDF</button>
       <div class="spacer"></div>
@@ -1796,7 +1797,7 @@ function pagePlanning() {
                     const ferD = holidayFor(dateD);
                     const vacD = schoolHolidayFor(dateD);
                     const shifts = (state.shifts[`${e.id}_${d}_${wk}`] || []).map(normShift);
-                    return `<div class="plan-cell cell ${shifts.length?'has':''} ${ferD?'ferie-cell':''} ${vacD && !ferD?'vacances-cell':''}" data-edit="${e.id}_${d}">
+                    return `<div class="plan-cell cell ${shifts.length?'has':''} ${ferD?'ferie-cell':''} ${vacD && !ferD?'vacances-cell':''}" data-edit="${e.id}_${d}" data-drop="${e.id}_${d}" ${shifts.length?`draggable="true" data-drag="${e.id}_${d}"`:''}>
                       ${shifts.map(s => renderShiftCell(s)).join('')}
                     </div>`;
                   }).join('')}
@@ -1842,6 +1843,53 @@ function renderShiftCell(s) {
   `;
 }
 
+// ── Drag & drop state ──
+let planDragSource = null;
+let planDragJustHappened = false;
+
+function handleShiftDrop(sourceKey, targetKey, isCopy) {
+  const wk = weekKey(state.weekStart);
+  const [srcEmp, srcDay] = sourceKey.split('_').map(Number);
+  const [tgtEmp, tgtDay] = targetKey.split('_').map(Number);
+  const srcFullKey = `${srcEmp}_${srcDay}_${wk}`;
+  const tgtFullKey = `${tgtEmp}_${tgtDay}_${wk}`;
+
+  const srcShifts = state.shifts[srcFullKey];
+  if (!srcShifts || !srcShifts.length) return;
+
+  const tgtShifts = state.shifts[tgtFullKey] || [];
+  const updates = {};
+
+  // Copie des shifts source
+  const copied = JSON.parse(JSON.stringify(srcShifts));
+
+  if (tgtShifts.length > 0) {
+    // La cible a déjà des shifts → on demande quoi faire
+    const action = confirm(
+      `La case de destination contient déjà ${tgtShifts.length} shift(s).\n\n` +
+      `OK = remplacer  ·  Annuler = fusionner (ajouter à la suite)`
+    );
+    if (action) {
+      state.shifts[tgtFullKey] = copied;
+    } else {
+      state.shifts[tgtFullKey] = [...tgtShifts, ...copied];
+    }
+  } else {
+    state.shifts[tgtFullKey] = copied;
+  }
+  updates[tgtFullKey] = state.shifts[tgtFullKey];
+
+  // Si déplacement (pas copie) → on vide la source
+  if (!isCopy) {
+    delete state.shifts[srcFullKey];
+    updates[srcFullKey] = null;
+  }
+
+  if (db) db.ref('shifts').update(updates).catch(e => console.warn(e));
+  toast(isCopy ? 'Shift dupliqué' : 'Shift déplacé', 'good');
+  render();
+}
+
 function bindPlanning() {
   $$('[data-week]').forEach(b => b.addEventListener('click', e => {
     const a = e.currentTarget.dataset.week;
@@ -1851,9 +1899,45 @@ function bindPlanning() {
     render();
   }));
   $$('[data-edit]').forEach(c => c.addEventListener('click', e => {
+    // Ignore click si on vient de finir un drag
+    if (planDragJustHappened) { planDragJustHappened = false; return; }
     const [empId, dayIdx] = e.currentTarget.dataset.edit.split('_').map(Number);
     openShiftEditor(empId, dayIdx);
   }));
+
+  // ── Drag & Drop des shifts ──
+  $$('[data-drag]').forEach(cell => {
+    cell.addEventListener('dragstart', ev => {
+      planDragSource = ev.currentTarget.dataset.drag;
+      ev.dataTransfer.effectAllowed = 'copyMove';
+      ev.currentTarget.classList.add('dragging');
+    });
+    cell.addEventListener('dragend', ev => {
+      ev.currentTarget.classList.remove('dragging');
+      $$('.plan-cell.drop-target').forEach(c => c.classList.remove('drop-target'));
+    });
+  });
+  $$('[data-drop]').forEach(cell => {
+    cell.addEventListener('dragover', ev => {
+      if (!planDragSource) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = ev.altKey ? 'copy' : 'move';
+      ev.currentTarget.classList.add('drop-target');
+    });
+    cell.addEventListener('dragleave', ev => {
+      ev.currentTarget.classList.remove('drop-target');
+    });
+    cell.addEventListener('drop', ev => {
+      ev.preventDefault();
+      ev.currentTarget.classList.remove('drop-target');
+      const target = ev.currentTarget.dataset.drop;
+      if (!planDragSource || planDragSource === target) { planDragSource = null; return; }
+      const isCopy = ev.altKey;
+      handleShiftDrop(planDragSource, target, isCopy);
+      planDragSource = null;
+      planDragJustHappened = true;
+    });
+  });
 
   const seedBtn = $('#seedDefault');
   if (seedBtn) seedBtn.addEventListener('click', () => seedPlanningFromTemplate());
@@ -1866,6 +1950,9 @@ function bindPlanning() {
 
   const brouillonBtn = $('#openBrouillon');
   if (brouillonBtn) brouillonBtn.addEventListener('click', () => openBrouillonManager());
+
+  const initLaboBtn = $('#initLabo');
+  if (initLaboBtn) initLaboBtn.addEventListener('click', () => openInitLabo());
 
   const clearBtn = $('#clearWeek');
   if (clearBtn) clearBtn.addEventListener('click', () => clearCurrentWeek());
@@ -2054,8 +2141,127 @@ function openDuplicateToNext() {
   });
 }
 
+// ─────────── INITIALISER LE LABO — copier une semaine-type sur toute 2026 ───────────
+function openInitLabo() {
+  // Référence : semaine du lundi 18 mai 2026
+  const refMonday = getMonday(new Date(2026, 4, 18));
+  const refWk = weekKey(refMonday);
+  const laboTeam = state.employees.filter(e => normEmp(e).pole === 'labo');
+
+  if (laboTeam.length === 0) {
+    openModal({
+      title: 'Initialiser le labo',
+      body: `<div class="text-mute" style="font-size:13px;line-height:1.5;">Aucun salarié n'est rattaché au pôle <strong>Labo</strong>. Va d'abord sur la fiche d'Abdur Rajjak et de Mohammad Shippon → onglet Contrats → champ "Pôle / équipe" → choisis "Labo".</div>`,
+      footer: `<button class="btn-sec" data-close>Fermer</button>`
+    });
+    return;
+  }
+
+  // Compte les shifts de référence pour chaque salarié labo
+  const refSummary = laboTeam.map(e => {
+    let cnt = 0;
+    for (let d = 0; d < 7; d++) {
+      cnt += (state.shifts[`${e.id}_${d}_${refWk}`] || []).length;
+    }
+    return { emp: e, count: cnt };
+  });
+  const totalRefShifts = refSummary.reduce((s,r) => s + r.count, 0);
+
+  const body = `
+    <div class="text-mute" style="font-size:13px;line-height:1.55;margin-bottom:16px;">
+      Copie les shifts de la <strong>semaine du 18 au 24 mai 2026</strong> sur <strong>toutes les semaines de l'année 2026</strong> (passées et futures), uniquement pour les salariés du <strong>Labo</strong>.
+    </div>
+
+    <div class="panel" style="border:1px solid var(--c-line);margin-bottom:14px;">
+      <div class="panel-body" style="padding:12px 14px;">
+        <div style="font-weight:700;font-size:12.5px;margin-bottom:8px;">Semaine de référence : 18-24 mai 2026</div>
+        ${refSummary.map(r => `
+          <div style="display:flex;justify-content:space-between;font-size:12.5px;padding:3px 0;">
+            <span>${esc(r.emp.prenom)} ${esc(r.emp.nom)}</span>
+            <span class="${r.count>0?'':'text-mute'}"><b>${r.count}</b> shift${r.count>1?'s':''}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    ${totalRefShifts === 0 ? `
+      <div class="info-banner" style="background:var(--c-alert-bg);border-left:3px solid var(--c-alert-text);padding:12px 14px;border-radius:8px;color:var(--c-alert-dark);font-size:12.5px;line-height:1.5;">
+        ⚠️ La semaine du 18-24 mai 2026 ne contient aucun shift pour le labo. Construis d'abord cette semaine dans le planning, puis reviens ici.
+      </div>
+    ` : `
+      <div class="form-grid">
+        <div class="field full">
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+            <input type="checkbox" id="ilOverwrite">
+            Écraser les semaines qui contiennent déjà des shifts labo
+          </label>
+          <div class="text-mute" style="font-size:11.5px;margin-top:4px;">Décoché : ne remplit que les semaines où Abdur/Mohammad n'ont aucun shift (recommandé).</div>
+        </div>
+      </div>
+      <div class="info-banner" style="background:var(--c-warn-bg);border-left:3px solid var(--c-warn-text);padding:11px 13px;border-radius:8px;font-size:12px;color:var(--c-warn-dark);margin-top:12px;line-height:1.5;">
+        Cette opération touche aussi les <strong>semaines déjà passées</strong> de 2026. Assure-toi que c'est cohérent avec ce que le labo a réellement fait et avec les bulletins de paie.
+      </div>
+    `}
+  `;
+  const footer = totalRefShifts === 0
+    ? `<button class="btn-sec" data-close>Fermer</button>`
+    : `<button class="btn-sec" data-close>Annuler</button><button class="btn-pri" id="ilConfirm" style="width:auto;">Appliquer sur toute l'année 2026</button>`;
+
+  const { close } = openModal({ title: '🥖 Initialiser le planning du labo', body, footer });
+
+  const confirmBtn = $('#ilConfirm');
+  if (confirmBtn) confirmBtn.addEventListener('click', () => {
+    const overwrite = $('#ilOverwrite').checked;
+    const updates = {};
+    let weeksFilled = 0, weeksSkipped = 0, shiftsCopied = 0;
+
+    // Toutes les semaines de 2026 (lundis)
+    let cursor = getMonday(new Date(2026, 0, 1));
+    // Si le lundi tombe en 2025, avancer au premier lundi de 2026
+    while (cursor.getFullYear() < 2026) cursor = addDays(cursor, 7);
+
+    while (cursor.getFullYear() === 2026) {
+      const targetWk = weekKey(cursor);
+      if (targetWk !== refWk) {
+        laboTeam.forEach(emp => {
+          // Y a-t-il déjà des shifts ce salarié cette semaine ?
+          let hasShifts = false;
+          for (let d = 0; d < 7; d++) {
+            if ((state.shifts[`${emp.id}_${d}_${targetWk}`]||[]).length) { hasShifts = true; break; }
+          }
+          if (hasShifts && !overwrite) { weeksSkipped++; return; }
+          // Vider si écrasement
+          if (hasShifts && overwrite) {
+            for (let d = 0; d < 7; d++) {
+              const k = `${emp.id}_${d}_${targetWk}`;
+              if (state.shifts[k]) { delete state.shifts[k]; updates[k] = null; }
+            }
+          }
+          // Copier les shifts de référence
+          for (let d = 0; d < 7; d++) {
+            const refShifts = state.shifts[`${emp.id}_${d}_${refWk}`];
+            if (refShifts && refShifts.length) {
+              const copy = JSON.parse(JSON.stringify(refShifts));
+              const k = `${emp.id}_${d}_${targetWk}`;
+              state.shifts[k] = copy;
+              updates[k] = copy;
+              shiftsCopied += copy.length;
+            }
+          }
+          weeksFilled++;
+        });
+      }
+      cursor = addDays(cursor, 7);
+    }
+
+    if (db && Object.keys(updates).length) db.ref('shifts').update(updates).catch(e => console.warn(e));
+    toast(`Labo initialisé sur 2026 · ${shiftsCopied} shifts copiés`, 'good', 4500);
+    close();
+    render();
+  });
+}
+
 // ─────────── BROUILLON — Planning bis invisible aux salariés ───────────
-// Stocké dans state.brouillon = { savedAt, shifts: {empId_dayIdx: [...]}, note }
 function openBrouillonManager() {
   const b = state.brouillon || null;
   const curWk = weekKey(state.weekStart);
@@ -2906,16 +3112,96 @@ function bindHours() {
     });
   });
   const exp1 = $('#exportPaieCsv');
-  if (exp1) exp1.addEventListener('click', () => exportPaieCSV(false));
+  if (exp1) exp1.addEventListener('click', () => openPaieExportSelector(false));
   const exp2 = $('#exportPaieDetailled');
-  if (exp2) exp2.addEventListener('click', () => exportPaieCSV(true));
+  if (exp2) exp2.addEventListener('click', () => openPaieExportSelector(true));
 }
 
-function exportPaieCSV(detailed) {
+// ─────────── SÉLECTEUR DE SALARIÉS POUR L'EXPORT PAIE ───────────
+function openPaieExportSelector(detailed) {
+  const actives = state.employees.filter(e => e.statut === 'Actif' && !normEmp(e).exclurePaie);
+  if (actives.length === 0) {
+    toast('Aucun salarié à exporter', 'error');
+    return;
+  }
+  const resto = actives.filter(e => normEmp(e).pole !== 'labo');
+  const labo = actives.filter(e => normEmp(e).pole === 'labo');
+
+  const empRow = (e) => `
+    <label class="export-emp-row">
+      <input type="checkbox" class="export-emp-cb" data-emp-id="${e.id}" checked>
+      <div class="av-emp sm">${initials(e)}</div>
+      <div>
+        <div style="font-weight:600;font-size:13px;">${esc(e.prenom)} ${esc(e.nom)}</div>
+        <div class="text-mute" style="font-size:11px;">${esc(e.poste||'—')} · ${esc(e.contrat||'—')} ${e.heures||0}h</div>
+      </div>
+    </label>
+  `;
+
+  const body = `
+    <div class="text-mute" style="font-size:12.5px;margin-bottom:14px;line-height:1.5;">
+      Sélectionne les salariés à inclure dans l'export ${detailed ? 'détaillé' : 'paie'}.
+    </div>
+    <div class="row" style="gap:8px;margin-bottom:12px;">
+      <button class="btn-ghost" id="exSelAll" style="font-size:11.5px;">Tout cocher</button>
+      <button class="btn-ghost" id="exSelNone" style="font-size:11.5px;">Tout décocher</button>
+      ${labo.length ? `<button class="btn-ghost" id="exSelResto" style="font-size:11.5px;">Resto uniquement</button>
+      <button class="btn-ghost" id="exSelLabo" style="font-size:11.5px;">Labo uniquement</button>` : ''}
+    </div>
+    ${resto.length ? `
+      <div class="export-group-title">Équipe restaurant</div>
+      ${resto.map(empRow).join('')}
+    ` : ''}
+    ${labo.length ? `
+      <div class="export-group-title" style="margin-top:14px;">🥖 Labo</div>
+      ${labo.map(empRow).join('')}
+    ` : ''}
+  `;
+  const footer = `
+    <button class="btn-sec" data-close>Annuler</button>
+    <button class="btn-pri" id="exConfirm" style="width:auto;">↓ Exporter la sélection</button>
+  `;
+  const { close } = openModal({ title: detailed ? 'Export paie détaillé' : 'Export paie', body, footer });
+
+  const setAll = (val) => $$('.export-emp-cb').forEach(cb => { cb.checked = val; });
+  $('#exSelAll').addEventListener('click', () => setAll(true));
+  $('#exSelNone').addEventListener('click', () => setAll(false));
+  const selResto = $('#exSelResto');
+  if (selResto) selResto.addEventListener('click', () => {
+    const laboIds = labo.map(e => e.id);
+    $$('.export-emp-cb').forEach(cb => {
+      cb.checked = !laboIds.includes(parseInt(cb.dataset.empId));
+    });
+  });
+  const selLabo = $('#exSelLabo');
+  if (selLabo) selLabo.addEventListener('click', () => {
+    const laboIds = labo.map(e => e.id);
+    $$('.export-emp-cb').forEach(cb => {
+      cb.checked = laboIds.includes(parseInt(cb.dataset.empId));
+    });
+  });
+
+  $('#exConfirm').addEventListener('click', () => {
+    const ids = $$('.export-emp-cb')
+      .filter(cb => cb.checked)
+      .map(cb => parseInt(cb.dataset.empId));
+    if (ids.length === 0) {
+      toast('Sélectionne au moins un salarié', 'error');
+      return;
+    }
+    exportPaieCSV(detailed, ids);
+    close();
+  });
+}
+
+function exportPaieCSV(detailed, selectedIds = null) {
   const anchor = state.monthAnchor || new Date();
   const year = anchor.getFullYear();
   const month = anchor.getMonth();
-  const actives = state.employees.filter(e => e.statut === 'Actif');
+  let actives = state.employees.filter(e => e.statut === 'Actif' && !normEmp(e).exclurePaie);
+  if (selectedIds && selectedIds.length) {
+    actives = actives.filter(e => selectedIds.includes(e.id));
+  }
   const monthEnd = new Date(year, month+1, 0);
   const firstMonday = getMonday(new Date(year, month, 1));
 
