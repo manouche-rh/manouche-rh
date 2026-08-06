@@ -1958,14 +1958,15 @@ function pagePlanning() {
                 const gapClass = Math.abs(gap) < 0.5 ? 'gap-ok' : (gap > 0 ? 'gap-over' : 'gap-under');
                 const empWeekHStr = empWeekH > 0 ? (Math.floor(empWeekH) + 'h' + (empWeekH % 1 > 0 ? pad(Math.round((empWeekH % 1) * 60)) : '')) : '0h';
                 return `
-                  <div class="plan-cell emp emp-clickable ${e.statut !== 'Actif' ? 'emp-inactif' : ''}" data-emp-open="${e.id}" title="Voir la fiche de ${esc(e.prenom)}">
+                  <div class="plan-cell emp ${e.statut !== 'Actif' ? 'emp-inactif' : ''}">
                     <div class="emp-row">
-                      <div class="av-emp sm">${initials(e)}</div>
+                      <div class="av-emp sm emp-clickable" data-emp-open="${e.id}" title="Voir la fiche de ${esc(e.prenom)}">${initials(e)}</div>
                       <div class="emp-nm-wrap">
-                        <div class="nm">${esc(e.prenom)}${e.statut !== 'Actif' ? ' <span class="chip-inactif">Inactif</span>' : ''}</div>
+                        <div class="nm emp-clickable" data-emp-open="${e.id}" title="Voir la fiche de ${esc(e.prenom)}">${esc(e.prenom)}${e.statut !== 'Actif' ? ' <span class="chip-inactif">Inactif</span>' : ''}</div>
                         <div class="emp-stats">
                           <span class="chip-tiny">${contractH}h</span>
                           <span class="chip-tiny ${gapClass}">${empWeekHStr}</span>
+                          ${empWeekH > 0 ? `<button class="chip-pdf" data-emp-pdf="${e.id}" title="Exporter la semaine en PDF">↓ PDF</button>` : ''}
                         </div>
                       </div>
                     </div>
@@ -2143,11 +2144,19 @@ function bindPlanning() {
 
   // Clic sur la cellule salarié → ouvrir sa fiche dans Équipe
   $$('[data-emp-open]').forEach(c => c.addEventListener('click', ev => {
+    ev.stopPropagation();
     const empId = parseInt(ev.currentTarget.dataset.empOpen);
     state.empDetail = empId;
     state.empTab = 'info';
     state.page = 'employees';
     render();
+  }));
+
+  // Clic sur le bouton PDF sous le nom → export PDF de la semaine affichée
+  $$('[data-emp-pdf]').forEach(b => b.addEventListener('click', ev => {
+    ev.stopPropagation();
+    const empId = parseInt(ev.currentTarget.dataset.empPdf);
+    exportEmpPlanningPDF(empId, state.weekStart);
   }));
 
   // ── Drag & Drop d'un shift individuel avec menu de choix ──

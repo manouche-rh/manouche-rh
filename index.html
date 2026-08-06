@@ -1058,6 +1058,8 @@ a { color: inherit; text-decoration: none; }
 .plan-cell.emp .av-emp.sm { width: 26px; height: 26px; font-size: 10px; }
 .plan-cell.emp-clickable { cursor: pointer; transition: background .15s; }
 .plan-cell.emp-clickable:hover { background: var(--c-line-2); }
+.emp-clickable { cursor: pointer; }
+.emp-clickable:hover { opacity: 0.75; }
 .plan-cell.emp.emp-inactif { opacity: 0.65; }
 .chip-inactif {
   display: inline-flex;
@@ -1084,6 +1086,25 @@ a { color: inherit; text-decoration: none; }
 .chip-tiny.gap-ok { background: var(--c-good); color: var(--c-good-dark); }
 .chip-tiny.gap-over { background: var(--c-warn); color: var(--c-warn-dark); }
 .chip-tiny.gap-under { background: var(--c-alert); color: var(--c-alert-dark); }
+.chip-pdf {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 600;
+  background: #1a1817;
+  color: #fff;
+  font-family: var(--f-mono);
+  letter-spacing: 0;
+  border: none;
+  cursor: pointer;
+  transition: background .12s, transform .12s;
+}
+.chip-pdf:hover {
+  background: #3a3634;
+  transform: translateY(-1px);
+}
 
 .plan-cell.cell:hover { background: var(--c-paper); cursor: pointer; }
 .plan-cell.cell.has::after {
