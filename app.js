@@ -243,6 +243,148 @@ function exportPlanningPDF() {
   }, 100);
 }
 
+// PDF individuel d'un salarié pour une semaine donnée
+function exportEmpPlanningPDF(empId, wkStart) {
+  const emp = state.employees.find(e => e.id === empId);
+  if (!emp) return;
+  const n = normEmp(emp);
+  const wk = weekKey(wkStart);
+  const wkEnd = addDays(wkStart, 6);
+
+  // Récap des jours
+  const days = [];
+  let totalH = 0;
+  for (let di = 0; di < 7; di++) {
+    const d = addDays(wkStart, di);
+    const shifts = (state.shifts[`${emp.id}_${di}_${wk}`] || []).map(normShift);
+    let dayH = 0;
+    shifts.forEach(s => dayH += shiftHours(s));
+    days.push({ dayIdx: di, date: d, shifts, dayH });
+    totalH += dayH;
+  }
+
+  const pub = state.publications && state.publications[wk];
+  const win = window.open('', '_blank');
+  if (!win) { toast('Pop-up bloquée — autorise les pop-ups', 'error'); return; }
+
+  const wkStartFmt = wkStart.toLocaleDateString('fr-FR', { day:'numeric', month:'long' });
+  const wkEndFmt = wkEnd.toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' });
+  const todayFmt = new Date().toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' });
+
+  const dayCard = (r) => {
+    const dayName = DAYS[r.dayIdx];
+    const dateStr = r.date.toLocaleDateString('fr-FR', { day:'numeric', month:'long' });
+    let shiftsHtml = '';
+    if (r.shifts.length === 0) {
+      shiftsHtml = '<div class="day-empty">—</div>';
+    } else {
+      shiftsHtml = r.shifts.map(s => {
+        if (s.leaveType) {
+          const lt = LEAVE_TYPES[s.leaveType];
+          return `<div class="shift-blk shift-leave">${esc(lt?.label||s.label||'Absent')}</div>`;
+        }
+        const type = s.type === 'midi' ? 'Ouverture' : s.type === 'soir' ? 'Fermeture' : 'Aller/Retour';
+        const cls = s.type === 'midi' ? 'shift-midi' : s.type === 'soir' ? 'shift-soir' : 'shift-ar';
+        const dur = shiftHours(s);
+        const durStr = Number.isInteger(dur) ? `${dur}h` : `${Math.floor(dur)}h${pad(Math.round((dur%1)*60))}`;
+        const pause = s.pauseDuration ? `<div class="shift-pause">Pause : ${s.pauseDuration}mn${s.pauseStart?` (${s.pauseStart}${s.pauseEnd?'–'+s.pauseEnd:''})`:''}</div>` : '';
+        return `<div class="shift-blk ${cls}">
+          <div class="shift-lbl">${type}${s.label?` — ${esc(s.label)}`:''}</div>
+          <div class="shift-tm">${s.start} – ${s.end}</div>
+          ${pause}
+          <div class="shift-dur">${durStr}</div>
+        </div>`;
+      }).join('');
+    }
+    return `<div class="day-card ${r.shifts.length?'':'day-off'}">
+      <div class="day-head"><span class="day-name">${dayName}</span><span class="day-date">${dateStr}</span></div>
+      ${shiftsHtml}
+      ${r.dayH > 0 ? `<div class="day-total">${r.dayH.toFixed(1)} h</div>` : ''}
+    </div>`;
+  };
+
+  const css = `
+    @page { margin: 15mm; size: A4; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; color: #1a1817; }
+    .header { background: #1a1817; color: #fff; padding: 22px 26px; border-radius: 10px; margin-bottom: 20px; }
+    .header h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+    .header .sub { margin-top: 4px; opacity: 0.75; font-size: 13px; }
+    .header .pub { float: right; font-size: 11.5px; opacity: 0.7; }
+    .who { display: flex; align-items: center; gap: 14px; padding: 16px 20px; background: #f7f4ec; border-radius: 10px; margin-bottom: 18px; }
+    .who .init { width: 46px; height: 46px; border-radius: 50%; background: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; }
+    .who .who-nm { font-weight: 700; font-size: 17px; letter-spacing: -0.015em; }
+    .who .who-sub { font-size: 12px; color: #555; margin-top: 2px; }
+    .stats { display: flex; gap: 10px; margin-bottom: 18px; }
+    .stat { flex: 1; padding: 12px 14px; border-radius: 10px; background: #f7f4ec; }
+    .stat .stat-num { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+    .stat .stat-lbl { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #666; margin-top: 4px; }
+    .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+    .day-card { border: 1px solid #e5ded0; border-radius: 10px; padding: 10px; min-height: 100px; }
+    .day-card.day-off { background: #faf8f3; }
+    .day-head { border-bottom: 1px dashed #e5ded0; padding-bottom: 6px; margin-bottom: 8px; }
+    .day-name { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #666; }
+    .day-date { display: block; font-size: 13px; font-weight: 700; margin-top: 1px; letter-spacing: -0.01em; }
+    .day-empty { text-align: center; color: #ccc; padding: 20px 0; font-size: 14px; }
+    .day-total { font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: 11px; font-weight: 600; text-align: center; margin-top: 8px; padding-top: 6px; border-top: 1px dashed #e5ded0; color: #333; }
+    .shift-blk { padding: 6px 8px; border-radius: 6px; margin-bottom: 4px; }
+    .shift-lbl { font-size: 9.5px; font-weight: 600; margin-bottom: 2px; }
+    .shift-tm { font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: 11px; font-weight: 700; letter-spacing: -0.01em; }
+    .shift-pause { font-size: 9px; opacity: 0.8; margin-top: 2px; }
+    .shift-dur { font-family: 'SFMono-Regular', Menlo, Consolas, monospace; font-size: 10px; opacity: 0.7; margin-top: 3px; }
+    .shift-midi { background: #dbeafe; color: #1e3a8a; }
+    .shift-soir { background: #dcfce7; color: #14532d; }
+    .shift-ar   { background: #fef9c3; color: #713f12; }
+    .shift-leave { background: #fee2e2; color: #b91c1c; text-align: center; font-weight: 600; font-size: 11px; padding: 12px 6px; }
+    .foot { margin-top: 22px; padding-top: 14px; border-top: 1px solid #eee; font-size: 10.5px; color: #999; display: flex; justify-content: space-between; }
+    .sig { margin-top: 30px; display: flex; justify-content: space-between; gap: 30px; }
+    .sig-box { flex: 1; }
+    .sig-lbl { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #666; margin-bottom: 40px; }
+    .sig-line { border-top: 1px solid #333; padding-top: 6px; font-size: 10.5px; color: #666; }
+    @media print { .day-card { break-inside: avoid; } }
+  `;
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Planning ${esc(emp.prenom)} ${esc(emp.nom)} — ${wkStartFmt}</title><style>${css}</style></head><body>
+    <div class="header">
+      <span class="pub">${pub ? 'Publié le '+new Date(pub.publishedAt).toLocaleDateString('fr-FR') : 'Brouillon'}</span>
+      <h1>Man'ouché — Planning individuel</h1>
+      <div class="sub">Semaine du ${wkStartFmt} au ${wkEndFmt}</div>
+    </div>
+
+    <div class="who">
+      <div class="init">${initials(emp)}</div>
+      <div style="flex:1;">
+        <div class="who-nm">${esc(emp.prenom)} ${esc(emp.nom)}</div>
+        <div class="who-sub">${esc(emp.poste||'—')} · ${esc(emp.contrat||'—')} ${emp.heures||0}h/sem${n.pole==='labo'?' · Labo':''}</div>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="stat-num">${totalH.toFixed(1)}<span style="font-size:11px;font-weight:600;opacity:0.6;margin-left:2px;">h</span></div><div class="stat-lbl">Heures planifiées</div></div>
+      <div class="stat"><div class="stat-num">${emp.heures||0}<span style="font-size:11px;font-weight:600;opacity:0.6;margin-left:2px;">h</span></div><div class="stat-lbl">Contrat</div></div>
+      <div class="stat"><div class="stat-num">${days.filter(d=>d.shifts.some(s=>!s.leaveType)).length}<span style="font-size:11px;font-weight:600;opacity:0.6;margin-left:2px;">j</span></div><div class="stat-lbl">Jours travaillés</div></div>
+      <div class="stat"><div class="stat-num">${days.filter(d=>d.shifts.length===0).length}<span style="font-size:11px;font-weight:600;opacity:0.6;margin-left:2px;">j</span></div><div class="stat-lbl">Jours de repos</div></div>
+    </div>
+
+    <div class="grid">${days.map(dayCard).join('')}</div>
+
+    <div class="sig">
+      <div class="sig-box"><div class="sig-lbl">Signature du salarié</div><div class="sig-line">Date et signature</div></div>
+      <div class="sig-box"><div class="sig-lbl">Signature de l'employeur</div><div class="sig-line">Date et signature</div></div>
+    </div>
+
+    <div class="foot">
+      <span>Man'ouché — 62 rue Rambuteau, 75003 Paris</span>
+      <span>Édité le ${todayFmt}</span>
+    </div>
+  </body></html>`;
+
+  win.document.write(html);
+  win.document.close();
+  setTimeout(() => win.print(), 500);
+  toast('Planning prêt — Cmd+P pour imprimer/PDF', 'good', 4000);
+}
+
 // Seed planning (template based on the RH_ULTIME schedule) — used by "Charger un planning de démarrage"
 const SEED_SHIFTS = {
   // Ahmad Yaggi (3)
@@ -1638,7 +1780,13 @@ function bindDashboard() {
 // ─────────── PLANNING ───────────
 function pagePlanning() {
   const wk = weekKey(state.weekStart);
-  const actives = state.employees.filter(e => e.statut === 'Actif');
+  // Actifs + Inactifs qui ont des shifts sur cette semaine (historique préservé)
+  const activesRaw = state.employees.filter(e => e.statut === 'Actif');
+  const inactivesWithShiftsThisWeek = state.employees.filter(e =>
+    e.statut !== 'Actif' &&
+    [0,1,2,3,4,5,6].some(d => (state.shifts[`${e.id}_${d}_${wk}`] || []).length)
+  );
+  const actives = [...activesRaw, ...inactivesWithShiftsThisWeek];
   const wkEnd = addDays(state.weekStart, 6);
   const todayISO = dateISO(new Date());
 
@@ -1656,6 +1804,24 @@ function pagePlanning() {
       prevWeekShiftCount += (state.shifts[`${e.id}_${d}_${prevWk}`] || []).length;
     }
   });
+
+  // Détection des jours vides (aucun salarié en travail effectif, hors férié)
+  const emptyDays = [];
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(state.weekStart, i);
+    if (holidayFor(d)) continue; // les fériés sont acceptables (fermeture)
+    let hasAnyWork = false;
+    for (const e of actives) {
+      const shifts = state.shifts[`${e.id}_${i}_${wk}`] || [];
+      if (shifts.some(s => !isLeave(normShift(s)))) { hasAnyWork = true; break; }
+    }
+    if (!hasAnyWork) emptyDays.push({ dayIdx: i, date: d });
+  }
+  // Alerte affichée si :
+  //  - la semaine est partiellement remplie (au moins 1 jour travaillé, donc les trous sont des oublis probables)
+  //  - OU la semaine est publiée mais a des trous (les salariés voient un planning avec des jours sans personne)
+  const workingDaysThisWeek = 7 - emptyDays.length - [0,1,2,3,4,5,6].filter(i => holidayFor(addDays(state.weekStart, i))).length;
+  const showEmptyAlert = emptyDays.length > 0 && (workingDaysThisWeek > 0 || state.publications[wk]);
 
   const pub = state.publications[wk];
   const isPublished = !!pub;
@@ -1728,6 +1894,16 @@ function pagePlanning() {
       </div>
     ` : ''}
 
+    ${showEmptyAlert ? `
+      <div class="empty-days-banner">
+        <span class="empty-days-icon">⚠</span>
+        <div>
+          <strong>Attention — ${emptyDays.length} jour${emptyDays.length>1?'s':''} sans salarié planifié</strong>
+          <div style="font-size:12px;margin-top:2px;">${emptyDays.map(d => `${DAYS[d.dayIdx]} ${d.date.getDate()}/${pad(d.date.getMonth()+1)}`).join(' · ')} — Vérifie si c'est intentionnel (fermeture) ou un oubli</div>
+        </div>
+      </div>
+    ` : ''}
+
     <div class="row plan-actions">
       <button class="btn-sec" id="dupFromPrev" ${prevWeekShiftCount > 0 ? '' : 'disabled style="opacity:.4;"'}>↺ Dupliquer la semaine précédente</button>
       <button class="btn-sec" id="dupToNext" ${weekShiftCount > 0 ? '' : 'disabled style="opacity:.4;"'}>⇉ Dupliquer sur les prochaines semaines</button>
@@ -1762,10 +1938,12 @@ function pagePlanning() {
               const isToday = dateISO(d) === todayISO;
               const fer = holidayFor(d);
               const vac = schoolHolidayFor(d);
-              return `<div class="plan-cell head ${fer?'ferie':''} ${vac && !fer?'vacances':''}">
+              // Marquer "vide" seulement si l'alerte globale est active
+              const emptyDay = showEmptyAlert && emptyDays.some(ed => ed.dayIdx === i);
+              return `<div class="plan-cell head ${fer?'ferie':''} ${vac && !fer?'vacances':''} ${emptyDay?'empty-day':''}">
                 <div class="day">${DAYS_SHORT[i]}</div>
                 <div class="date ${isToday?'today':''}">${d.getDate()}</div>
-                ${fer ? `<div class="ferie-tag" title="${esc(fer.long)}">${esc(fer.short)}</div>` : (vac ? `<div class="vacances-tag" title="Vacances scolaires Zone C">🎒 ${esc(vac.name)}</div>` : '')}
+                ${fer ? `<div class="ferie-tag" title="${esc(fer.long)}">${esc(fer.short)}</div>` : (vac ? `<div class="vacances-tag" title="Vacances scolaires Zone C">🎒 ${esc(vac.name)}</div>` : (emptyDay ? `<div class="empty-day-tag" title="Aucun salarié planifié ce jour">⚠ Vide</div>` : ''))}
               </div>`;
             }).join('')}
             ${(() => {
@@ -1780,11 +1958,11 @@ function pagePlanning() {
                 const gapClass = Math.abs(gap) < 0.5 ? 'gap-ok' : (gap > 0 ? 'gap-over' : 'gap-under');
                 const empWeekHStr = empWeekH > 0 ? (Math.floor(empWeekH) + 'h' + (empWeekH % 1 > 0 ? pad(Math.round((empWeekH % 1) * 60)) : '')) : '0h';
                 return `
-                  <div class="plan-cell emp">
+                  <div class="plan-cell emp emp-clickable ${e.statut !== 'Actif' ? 'emp-inactif' : ''}" data-emp-open="${e.id}" title="Voir la fiche de ${esc(e.prenom)}">
                     <div class="emp-row">
                       <div class="av-emp sm">${initials(e)}</div>
                       <div class="emp-nm-wrap">
-                        <div class="nm">${esc(e.prenom)}</div>
+                        <div class="nm">${esc(e.prenom)}${e.statut !== 'Actif' ? ' <span class="chip-inactif">Inactif</span>' : ''}</div>
                         <div class="emp-stats">
                           <span class="chip-tiny">${contractH}h</span>
                           <span class="chip-tiny ${gapClass}">${empWeekHStr}</span>
@@ -1797,8 +1975,8 @@ function pagePlanning() {
                     const ferD = holidayFor(dateD);
                     const vacD = schoolHolidayFor(dateD);
                     const shifts = (state.shifts[`${e.id}_${d}_${wk}`] || []).map(normShift);
-                    return `<div class="plan-cell cell ${shifts.length?'has':''} ${ferD?'ferie-cell':''} ${vacD && !ferD?'vacances-cell':''}" data-edit="${e.id}_${d}" data-drop="${e.id}_${d}" ${shifts.length?`draggable="true" data-drag="${e.id}_${d}"`:''}>
-                      ${shifts.map(s => renderShiftCell(s)).join('')}
+                    return `<div class="plan-cell cell ${shifts.length?'has':''} ${ferD?'ferie-cell':''} ${vacD && !ferD?'vacances-cell':''}" data-edit="${e.id}_${d}" data-drop="${e.id}_${d}">
+                      ${shifts.map((s,idx) => renderShiftCell(s, e.id, d, idx)).join('')}
                     </div>`;
                   }).join('')}
                 `;
@@ -1823,10 +2001,11 @@ function pagePlanning() {
   `;
 }
 
-function renderShiftCell(s) {
+function renderShiftCell(s, empId, dayIdx, shiftIdx) {
+  const dragAttr = (empId !== undefined) ? `draggable="true" data-drag-shift="${empId}_${dayIdx}_${shiftIdx}"` : '';
   if (s.leaveType) {
     const lt = LEAVE_TYPES[s.leaveType] || { short: s.label || 'Absent', color: 'leave-justifie' };
-    return `<div class="shift ${lt.color}">${esc(lt.short)}</div>`;
+    return `<div class="shift ${lt.color}" ${dragAttr}>${esc(lt.short)}</div>`;
   }
   const totalMin = Math.round(shiftHours(s) * 60);
   const h = Math.floor(totalMin / 60);
@@ -1835,7 +2014,7 @@ function renderShiftCell(s) {
   const label = s.label || (s.type==='midi'?'Ouverture':s.type==='soir'?'Fermeture':'Aller/Retour');
   const pauseStr = s.pauseDuration ? ` (${s.pauseDuration}mn)` : '';
   return `
-    <div class="shift ${s.type}">
+    <div class="shift ${s.type}" ${dragAttr}>
       <div class="shift-title">${esc(label)}</div>
       <div class="shift-time">${s.start} – ${s.end}${pauseStr}</div>
       <div class="shift-dur">${durStr}</div>
@@ -1847,42 +2026,99 @@ function renderShiftCell(s) {
 let planDragSource = null;
 let planDragJustHappened = false;
 
+// Menu de choix Déplacer / Dupliquer à l'arrivée du drop
+function showDropChoice(x, y, sourceKey, targetKey) {
+  // Retire tout menu résiduel
+  const old = document.getElementById('dropChoice');
+  if (old) old.remove();
+
+  const menu = document.createElement('div');
+  menu.id = 'dropChoice';
+  menu.className = 'drop-choice';
+  menu.innerHTML = `
+    <button class="drop-choice-btn dc-move" data-action="move">
+      <span class="dc-ico">↷</span>
+      <span>Déplacer</span>
+    </button>
+    <button class="drop-choice-btn dc-copy" data-action="copy">
+      <span class="dc-ico">+</span>
+      <span>Dupliquer</span>
+    </button>
+    <button class="drop-choice-btn dc-cancel" data-action="cancel">
+      <span>Annuler</span>
+    </button>
+  `;
+  // Position — évite les débordements
+  document.body.appendChild(menu);
+  const rect = menu.getBoundingClientRect();
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let px = x - 10, py = y - 10;
+  if (px + rect.width > vw - 8) px = vw - rect.width - 8;
+  if (py + rect.height > vh - 8) py = vh - rect.height - 8;
+  if (px < 8) px = 8;
+  if (py < 8) py = 8;
+  menu.style.left = px + 'px';
+  menu.style.top = py + 'px';
+  requestAnimationFrame(() => menu.classList.add('show'));
+
+  const cleanup = () => {
+    menu.classList.remove('show');
+    setTimeout(() => menu.remove(), 150);
+    document.removeEventListener('click', outsideClick, true);
+    document.removeEventListener('keydown', escKey);
+  };
+  const outsideClick = (e) => { if (!menu.contains(e.target)) cleanup(); };
+  const escKey = (e) => { if (e.key === 'Escape') cleanup(); };
+  setTimeout(() => {
+    document.addEventListener('click', outsideClick, true);
+    document.addEventListener('keydown', escKey);
+  }, 0);
+
+  menu.querySelectorAll('.drop-choice-btn').forEach(b => {
+    b.addEventListener('click', ev => {
+      ev.stopPropagation();
+      const action = ev.currentTarget.dataset.action;
+      cleanup();
+      if (action === 'move') handleShiftDrop(sourceKey, targetKey, false);
+      else if (action === 'copy') handleShiftDrop(sourceKey, targetKey, true);
+    });
+  });
+}
+
 function handleShiftDrop(sourceKey, targetKey, isCopy) {
+  // sourceKey = "empId_dayIdx_shiftIdx" — un shift précis
+  // targetKey = "empId_dayIdx" — une case cible
   const wk = weekKey(state.weekStart);
-  const [srcEmp, srcDay] = sourceKey.split('_').map(Number);
+  const [srcEmp, srcDay, srcIdx] = sourceKey.split('_').map(Number);
   const [tgtEmp, tgtDay] = targetKey.split('_').map(Number);
   const srcFullKey = `${srcEmp}_${srcDay}_${wk}`;
   const tgtFullKey = `${tgtEmp}_${tgtDay}_${wk}`;
 
-  const srcShifts = state.shifts[srcFullKey];
-  if (!srcShifts || !srcShifts.length) return;
+  const srcArr = state.shifts[srcFullKey];
+  if (!srcArr || !srcArr[srcIdx]) return;
 
-  const tgtShifts = state.shifts[tgtFullKey] || [];
+  // Même case → on ne fait rien
+  if (srcFullKey === tgtFullKey && !isCopy) return;
+
+  const shiftToMove = JSON.parse(JSON.stringify(srcArr[srcIdx]));
   const updates = {};
 
-  // Copie des shifts source
-  const copied = JSON.parse(JSON.stringify(srcShifts));
+  // Ajouter le shift à la case cible (append)
+  const tgtArr = state.shifts[tgtFullKey] ? [...state.shifts[tgtFullKey]] : [];
+  tgtArr.push(shiftToMove);
+  state.shifts[tgtFullKey] = tgtArr;
+  updates[tgtFullKey] = tgtArr;
 
-  if (tgtShifts.length > 0) {
-    // La cible a déjà des shifts → on demande quoi faire
-    const action = confirm(
-      `La case de destination contient déjà ${tgtShifts.length} shift(s).\n\n` +
-      `OK = remplacer  ·  Annuler = fusionner (ajouter à la suite)`
-    );
-    if (action) {
-      state.shifts[tgtFullKey] = copied;
-    } else {
-      state.shifts[tgtFullKey] = [...tgtShifts, ...copied];
-    }
-  } else {
-    state.shifts[tgtFullKey] = copied;
-  }
-  updates[tgtFullKey] = state.shifts[tgtFullKey];
-
-  // Si déplacement (pas copie) → on vide la source
+  // Si déplacement : retirer le shift de la source
   if (!isCopy) {
-    delete state.shifts[srcFullKey];
-    updates[srcFullKey] = null;
+    const newSrcArr = srcArr.filter((_, i) => i !== srcIdx);
+    if (newSrcArr.length) {
+      state.shifts[srcFullKey] = newSrcArr;
+      updates[srcFullKey] = newSrcArr;
+    } else {
+      delete state.shifts[srcFullKey];
+      updates[srcFullKey] = null;
+    }
   }
 
   if (db) db.ref('shifts').update(updates).catch(e => console.warn(e));
@@ -1905,23 +2141,34 @@ function bindPlanning() {
     openShiftEditor(empId, dayIdx);
   }));
 
-  // ── Drag & Drop des shifts ──
-  $$('[data-drag]').forEach(cell => {
-    cell.addEventListener('dragstart', ev => {
-      planDragSource = ev.currentTarget.dataset.drag;
+  // Clic sur la cellule salarié → ouvrir sa fiche dans Équipe
+  $$('[data-emp-open]').forEach(c => c.addEventListener('click', ev => {
+    const empId = parseInt(ev.currentTarget.dataset.empOpen);
+    state.empDetail = empId;
+    state.empTab = 'info';
+    state.page = 'employees';
+    render();
+  }));
+
+  // ── Drag & Drop d'un shift individuel avec menu de choix ──
+  $$('[data-drag-shift]').forEach(sh => {
+    sh.addEventListener('dragstart', ev => {
+      ev.stopPropagation();
+      planDragSource = ev.currentTarget.dataset.dragShift; // "empId_dayIdx_shiftIdx"
       ev.dataTransfer.effectAllowed = 'copyMove';
-      ev.currentTarget.classList.add('dragging');
+      ev.currentTarget.classList.add('shift-dragging');
     });
-    cell.addEventListener('dragend', ev => {
-      ev.currentTarget.classList.remove('dragging');
+    sh.addEventListener('dragend', ev => {
+      ev.currentTarget.classList.remove('shift-dragging');
       $$('.plan-cell.drop-target').forEach(c => c.classList.remove('drop-target'));
+      setTimeout(() => { planDragJustHappened = false; }, 100);
     });
   });
   $$('[data-drop]').forEach(cell => {
     cell.addEventListener('dragover', ev => {
       if (!planDragSource) return;
       ev.preventDefault();
-      ev.dataTransfer.dropEffect = ev.altKey ? 'copy' : 'move';
+      ev.dataTransfer.dropEffect = 'move';
       ev.currentTarget.classList.add('drop-target');
     });
     cell.addEventListener('dragleave', ev => {
@@ -1931,11 +2178,19 @@ function bindPlanning() {
       ev.preventDefault();
       ev.currentTarget.classList.remove('drop-target');
       const target = ev.currentTarget.dataset.drop;
-      if (!planDragSource || planDragSource === target) { planDragSource = null; return; }
-      const isCopy = ev.altKey;
-      handleShiftDrop(planDragSource, target, isCopy);
-      planDragSource = null;
+      if (!planDragSource) return;
+      // Même case → on ignore
+      const [srcEmp, srcDay] = planDragSource.split('_').map(Number);
+      const [tgtEmp, tgtDay] = target.split('_').map(Number);
+      const source = planDragSource;
       planDragJustHappened = true;
+      if (srcEmp === tgtEmp && srcDay === tgtDay) {
+        planDragSource = null;
+        return;
+      }
+      // Menu de choix : Déplacer / Dupliquer
+      showDropChoice(ev.clientX, ev.clientY, source, target);
+      planDragSource = null;
     });
   });
 
@@ -2519,6 +2774,22 @@ function openShiftEditor(empId, dayIdx) {
       $('#shDateEnd').value = ev.target.value;
     }
   });
+
+  // Calcul auto de la fin de pause à partir de "Pause début" + "Pause (mn)"
+  function syncPauseEnd() {
+    const startVal = $('#shPauseStart').value;
+    const durVal = parseInt($('#shPauseDur').value) || 0;
+    if (!startVal || durVal <= 0) return;
+    const [h, m] = startVal.split(':').map(Number);
+    let totalMin = h * 60 + m + durVal;
+    totalMin = totalMin % (24 * 60); // wrap 24h
+    const endH = Math.floor(totalMin / 60);
+    const endM = totalMin % 60;
+    $('#shPauseEnd').value = `${pad(endH)}:${pad(endM)}`;
+  }
+  $('#shPauseStart').addEventListener('change', syncPauseEnd);
+  $('#shPauseDur').addEventListener('change', syncPauseEnd);
+  $('#shPauseDur').addEventListener('input', syncPauseEnd);
 
   $('#shSave').addEventListener('click', () => {
     const leave = $('#shLeaveType').value;
@@ -4124,6 +4395,19 @@ function empTabTemps(n) {
     const dayIdx = (d.getDay() + 6) % 7;
     (state.shifts[`${n.id}_${dayIdx}_${wk}`] || []).forEach(s => monthH += shiftHours(s));
   }
+  // Semaine sélectionnée pour l'export (défaut = semaine courante du planning)
+  const selWk = state.empPdfWeekStart || state.weekStart || getMonday(new Date());
+  const wk = weekKey(selWk);
+  const wkEnd = addDays(selWk, 6);
+  // Récap des shifts sur cette semaine
+  const rows = [];
+  let selWeekH = 0;
+  for (let di = 0; di < 7; di++) {
+    const d = addDays(selWk, di);
+    const shifts = (state.shifts[`${n.id}_${di}_${wk}`] || []).map(normShift);
+    rows.push({ dayIdx: di, date: d, shifts });
+    shifts.forEach(s => selWeekH += shiftHours(s));
+  }
   return `
     <div class="info-grid">
       <div class="panel">
@@ -4146,6 +4430,54 @@ function empTabTemps(n) {
         </div>
       </div>
     </div>
+
+    <div class="panel" style="margin-top:14px;">
+      <div class="panel-head">
+        <h3>Planning individuel</h3>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button class="btn-ghost" id="pdfWkPrev" style="padding:4px 9px;">‹</button>
+          <span class="mono" style="font-size:12px;color:var(--c-ink-3);min-width:130px;text-align:center;">
+            ${selWk.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})} → ${wkEnd.toLocaleDateString('fr-FR',{day:'numeric',month:'short',year:'numeric'})}
+          </span>
+          <button class="btn-ghost" id="pdfWkNext" style="padding:4px 9px;">›</button>
+          <button class="btn-ghost" id="pdfWkToday" style="font-size:11px;">Cette semaine</button>
+        </div>
+      </div>
+      <div class="panel-body">
+        ${selWeekH === 0 ? `
+          <div class="text-mute" style="text-align:center;padding:20px 0;font-size:13px;">
+            Aucun shift planifié cette semaine
+          </div>
+        ` : `
+          <div style="font-size:12.5px;color:var(--c-ink-4);margin-bottom:10px;">
+            <strong style="color:var(--c-ink);">${selWeekH.toFixed(1)} h</strong> planifiées sur la semaine
+            ${n.heures ? ` · contrat ${n.heures}h/sem` : ''}
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;">
+            ${rows.map(r => `
+              <div style="border:1px solid var(--c-line-2);border-radius:8px;padding:8px;min-height:60px;">
+                <div style="font-size:9.5px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--c-ink-4);margin-bottom:4px;">
+                  ${DAYS_SHORT[r.dayIdx]} ${r.date.getDate()}
+                </div>
+                ${r.shifts.length === 0 ? '<span style="font-size:11px;color:var(--c-ink-5);">—</span>' : r.shifts.map(s => {
+                  if (s.leaveType) {
+                    const lt = LEAVE_TYPES[s.leaveType];
+                    return `<div style="font-size:10.5px;font-weight:600;padding:3px 6px;border-radius:5px;background:var(--c-alert);color:var(--c-alert-dark);margin-bottom:2px;">${esc(lt?.short||s.label||'Absent')}</div>`;
+                  }
+                  const bg = s.type==='midi'?'#dbeafe':s.type==='soir'?'#dcfce7':'#fef9c3';
+                  const col = s.type==='midi'?'#1e3a8a':s.type==='soir'?'#14532d':'#713f12';
+                  return `<div style="font-size:10px;padding:3px 6px;border-radius:5px;background:${bg};color:${col};margin-bottom:2px;line-height:1.3;"><b>${s.start}–${s.end}</b>${s.pauseDuration?`<br><small>pause ${s.pauseDuration}mn</small>`:''}</div>`;
+                }).join('')}
+              </div>
+            `).join('')}
+          </div>
+        `}
+        <div class="row" style="justify-content:center;margin-top:14px;">
+          <button class="btn-pri" id="empPdfBtn" style="width:auto;padding:9px 18px;" ${selWeekH === 0 ? 'disabled style="opacity:.4;padding:9px 18px;"' : ''}>↓ Exporter le planning en PDF</button>
+        </div>
+      </div>
+    </div>
+
     <div class="row" style="justify-content:center;margin-top:18px;">
       <button class="btn-pri" id="editDispos" style="width:auto;padding:10px 18px;">✎ Modifier les disponibilités</button>
     </div>
@@ -4154,6 +4486,28 @@ function empTabTemps(n) {
 
 function bindEmpTabTemps() {
   $('#editDispos').addEventListener('click', () => openDisposEditor());
+  const prev = $('#pdfWkPrev');
+  if (prev) prev.addEventListener('click', () => {
+    const cur = state.empPdfWeekStart || state.weekStart || getMonday(new Date());
+    state.empPdfWeekStart = addDays(cur, -7);
+    render();
+  });
+  const next = $('#pdfWkNext');
+  if (next) next.addEventListener('click', () => {
+    const cur = state.empPdfWeekStart || state.weekStart || getMonday(new Date());
+    state.empPdfWeekStart = addDays(cur, 7);
+    render();
+  });
+  const today = $('#pdfWkToday');
+  if (today) today.addEventListener('click', () => {
+    state.empPdfWeekStart = getMonday(new Date());
+    render();
+  });
+  const pdfBtn = $('#empPdfBtn');
+  if (pdfBtn) pdfBtn.addEventListener('click', () => {
+    const wkStart = state.empPdfWeekStart || state.weekStart || getMonday(new Date());
+    exportEmpPlanningPDF(state.empDetail, wkStart);
+  });
 }
 
 function openDisposEditor() {
